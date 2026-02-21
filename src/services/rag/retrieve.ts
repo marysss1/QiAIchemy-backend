@@ -3,6 +3,11 @@ import { env } from '../../config/env';
 import { KnowledgeChunk } from '../../models/KnowledgeChunk';
 import { createEmbeddings } from '../llm/greatRouterClient';
 import { cosineSimilarity, lexicalSimilarity, tokenizeForSearch } from './textUtils';
+import {
+  computeGraphQueryFeatures,
+  graphTokenSimilarity,
+  reciprocalRankFusion,
+} from './graphLite';
 
 export interface RetrievedChunk {
   id: string;
@@ -15,6 +20,8 @@ export interface RetrievedChunk {
   score: number;
   embeddingScore: number;
   lexicalScore: number;
+  graphScore: number;
+  rrfScore: number;
 }
 
 type CandidateChunk = {
@@ -88,7 +95,8 @@ async function loadCandidates(query: string, limit: number): Promise<CandidateCh
 
 export async function retrieveRelevantChunks(
   query: string,
-  topK = env.RAG_TOP_K
+  topK = env.RAG_TOP_K,
+  options?: { graphContext?: string }
 ): Promise<RetrievedChunk[]> {
   const queryText = query.trim();
   if (!queryText) {
@@ -100,6 +108,8 @@ export async function retrieveRelevantChunks(
   if (candidates.length === 0) {
     return [];
   }
+
+  const graphFeatures = await computeGraphQueryFeatures(queryText, options?.graphContext);
 
   let queryEmbedding: number[] = [];
   try {
@@ -113,7 +123,11 @@ export async function retrieveRelevantChunks(
     const docTokens = candidate.keywords?.length ? candidate.keywords : tokenizeForSearch(candidate.text);
     const lexicalScore = lexicalSimilarity(queryTokens, docTokens);
     const embeddingScore = cosineSimilarity(queryEmbedding, candidate.embedding ?? []);
-    const score = queryEmbedding.length > 0 ? embeddingScore * 0.78 + lexicalScore * 0.22 : lexicalScore;
+    const graphScore = graphTokenSimilarity(docTokens, graphFeatures.tokenBoost);
+    const score =
+      queryEmbedding.length > 0
+        ? embeddingScore * 0.62 + lexicalScore * 0.2 + graphScore * 0.18
+        : lexicalScore * 0.7 + graphScore * 0.3;
 
     return {
       id: String(candidate._id),
@@ -126,8 +140,30 @@ export async function retrieveRelevantChunks(
       score,
       embeddingScore,
       lexicalScore,
+      graphScore,
+      rrfScore: 0,
     };
   });
 
-  return scored.sort((a, b) => b.score - a.score).slice(0, topK);
+  const byEmbedding = [...scored].sort((a, b) => b.embeddingScore - a.embeddingScore);
+  const byLexical = [...scored].sort((a, b) => b.lexicalScore - a.lexicalScore);
+  const byGraph = [...scored].sort((a, b) => b.graphScore - a.graphScore);
+
+  const embRank = new Map(byEmbedding.map((item, idx) => [item.id, idx + 1]));
+  const lexRank = new Map(byLexical.map((item, idx) => [item.id, idx + 1]));
+  const graphRank = new Map(byGraph.map((item, idx) => [item.id, idx + 1]));
+
+  const merged = scored.map((item) => {
+    const rrfScore =
+      reciprocalRankFusion(embRank.get(item.id) ?? 999) +
+      reciprocalRankFusion(lexRank.get(item.id) ?? 999) +
+      reciprocalRankFusion(graphRank.get(item.id) ?? 999);
+    return {
+      ...item,
+      rrfScore,
+      score: item.score * 0.7 + rrfScore * 0.3,
+    };
+  });
+
+  return merged.sort((a, b) => b.score - a.score).slice(0, topK);
 }

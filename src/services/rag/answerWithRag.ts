@@ -118,7 +118,16 @@ export async function answerWithRagPersonalized(
     throw new Error('Question is empty');
   }
 
-  const evidence = await retrieveRelevantChunks(trimmedQuestion, topK);
+  const graphContext = [
+    options.healthContext ?? '',
+    ...(options.conversationHistory?.map((item) => `${item.role}:${item.content}`) ?? []),
+  ]
+    .join('\n')
+    .trim();
+
+  const evidence = await retrieveRelevantChunks(trimmedQuestion, topK, {
+    graphContext: graphContext || undefined,
+  });
   const personalized = Boolean(
     (options.conversationHistory && options.conversationHistory.length > 0) || options.healthContext
   );

@@ -10,7 +10,9 @@
     "typecheck": "tsc --noEmit",
     "rag:ingest": "ts-node src/scripts/ragIngest.ts",
     "rag:eval:gen": "ts-node src/scripts/generateEvalSet.ts",
-    "rag:eval": "ts-node src/scripts/runRagEval.ts"
+    "rag:eval": "ts-node src/scripts/runRagEval.ts",
+    "rag:eval:summary": "ts-node src/scripts/summarizeRagEval.ts",
+    "knowledge:build": "ts-node src/scripts/buildKnowledgeCorpus.ts"
   },
   "keywords": [],
   "author": "",
