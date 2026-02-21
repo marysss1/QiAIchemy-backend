@@ -7,12 +7,12 @@ import { User, UserDocument } from '../models/User';
 
 const registerSchema = z.object({
   name: z.string().trim().min(1).max(50).optional(),
-  email: z.email(),
+  email: z.string().email(),
   password: z.string().min(8).max(64),
 });
 
 const loginSchema = z.object({
-  email: z.email(),
+  email: z.string().email(),
   password: z.string().min(8).max(64),
 });
 

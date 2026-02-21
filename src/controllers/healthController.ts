@@ -1,5 +1,5 @@
 import { Request, Response } from 'express';
-import { z } from 'zod';
+import { ZodError, z } from 'zod';
 import { HealthSnapshot } from '../models/HealthSnapshot';
 
 const optionalNumber = z.number().finite().optional();
@@ -148,7 +148,7 @@ export async function uploadHealthSnapshot(req: Request, res: Response): Promise
       generatedAt: created.generatedAt.toISOString(),
     });
   } catch (error) {
-    if (error instanceof z.ZodError) {
+    if (error instanceof ZodError) {
       res.status(400).json({
         message: 'Invalid health snapshot payload',
         errors: error.flatten(),
