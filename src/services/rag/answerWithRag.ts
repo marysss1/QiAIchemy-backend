@@ -22,14 +22,32 @@ export interface RagAnswerResult {
   model: string;
 }
 
-function buildSystemPrompt(): string {
-  return [
+export interface ConversationTurn {
+  role: 'user' | 'assistant';
+  content: string;
+}
+
+export interface RagPersonalizedOptions {
+  question: string;
+  topK?: number;
+  conversationHistory?: ConversationTurn[];
+  healthContext?: string;
+}
+
+function buildSystemPrompt(personalized: boolean): string {
+  const lines = [
     '你是 QiAIchemy 的中医知识助手。',
     '回答必须严格基于提供的参考资料，不要编造。若证据不足，明确说“根据当前资料无法确定”。',
     '用中文回答，结构清晰，尽量给出要点。',
     '每个关键结论后都要附引用标签，例如 [C1]、[C2]。',
     '不要给出替代医生诊断的结论；涉及疾病或紧急症状时提醒线下就医。',
-  ].join('\n');
+  ];
+
+  if (personalized) {
+    lines.push('如果提供了用户健康快照，请结合该数据给出个性化建议，并明确“基于用户数据”的依据，避免过度推断。');
+  }
+
+  return lines.join('\n');
 }
 
 function buildContextBlock(chunks: RetrievedChunk[]): string {
@@ -60,24 +78,55 @@ function toCitations(chunks: RetrievedChunk[]): CitationItem[] {
   }));
 }
 
-export async function answerWithRag(question: string, topK = env.RAG_TOP_K): Promise<RagAnswerResult> {
-  const trimmedQuestion = question.trim();
+function buildConversationBlock(history: ConversationTurn[] | undefined): string {
+  if (!history || history.length === 0) {
+    return '无历史对话。';
+  }
+
+  return history
+    .slice(-8)
+    .map((item, index) => `${index + 1}. ${item.role === 'user' ? '用户' : '助手'}：${item.content.trim()}`)
+    .join('\n');
+}
+
+function buildUserContent(
+  question: string,
+  evidence: RetrievedChunk[],
+  history?: ConversationTurn[],
+  healthContext?: string
+): string {
+  const parts = ['用户问题：', question];
+
+  if (history && history.length > 0) {
+    parts.push('', '历史对话（最近若干轮）：', buildConversationBlock(history));
+  }
+
+  if (healthContext) {
+    parts.push('', '用户健康快照摘要（最近一次）：', healthContext);
+  }
+
+  parts.push('', '参考资料（引用时请用 [C1]/[C2] 标签）：', buildContextBlock(evidence));
+  return parts.join('\n');
+}
+
+export async function answerWithRagPersonalized(
+  options: RagPersonalizedOptions
+): Promise<RagAnswerResult> {
+  const topK = options.topK ?? env.RAG_TOP_K;
+  const trimmedQuestion = options.question.trim();
   if (!trimmedQuestion) {
     throw new Error('Question is empty');
   }
 
   const evidence = await retrieveRelevantChunks(trimmedQuestion, topK);
+  const personalized = Boolean(
+    (options.conversationHistory && options.conversationHistory.length > 0) || options.healthContext
+  );
   const messages: ChatCompletionMessageParam[] = [
-    { role: 'system', content: buildSystemPrompt() },
+    { role: 'system', content: buildSystemPrompt(personalized) },
     {
       role: 'user',
-      content: [
-        '用户问题：',
-        trimmedQuestion,
-        '',
-        '参考资料（引用时请用 [C1]/[C2] 标签）：',
-        buildContextBlock(evidence),
-      ].join('\n'),
+      content: buildUserContent(trimmedQuestion, evidence, options.conversationHistory, options.healthContext),
     },
   ];
 
@@ -94,4 +143,8 @@ export async function answerWithRag(question: string, topK = env.RAG_TOP_K): Pro
     evidenceCount: evidence.length,
     model: completion.model,
   };
+}
+
+export async function answerWithRag(question: string, topK = env.RAG_TOP_K): Promise<RagAnswerResult> {
+  return answerWithRagPersonalized({ question, topK });
 }

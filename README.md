@@ -77,6 +77,12 @@ npm start
 ## Agent + RAG workflow
 
 1) Prepare knowledge files under `data/knowledge` (`.md` / `.txt`).
+   - project now includes 5 starter files:
+     - `01_huangdi-neijing_core.md`
+     - `02_shanghan_jingui_core.md`
+     - `03_wenbing_tiaobian_core.md`
+     - `04_tcm_foundation_and_diagnosis.md`
+     - `05_chronic_disease_tcm_lifestyle.md`
 
 2) Ingest chunks + embeddings:
 
@@ -106,5 +112,21 @@ Evaluation report JSON will be written to `reports/`.
 - `POST /api/auth/login`
 - `GET /api/auth/me` (Bearer token)
 - `POST /api/agent/chat` (Bearer token, Agent + RAG + citations)
+- `POST /api/agent/chat/health` (Bearer token, conversation + latest HealthSnapshot + RAG + citations)
 - `POST /api/health/snapshots` (Bearer token, upload HealthKit snapshot with server timestamp)
 - `GET /health`
+
+### Personalized Agent Example
+
+`POST /api/agent/chat/health`
+
+```json
+{
+  "message": "最近睡眠分数低，白天也乏力，怎么调理？",
+  "topK": 6,
+  "history": [
+    { "role": "user", "content": "最近压力大，经常晚睡" },
+    { "role": "assistant", "content": "你最近是否有运动和饮食变化？" }
+  ]
+}
+```
