@@ -19,9 +19,16 @@ cp .env.example .env
 Update `.env`:
 
 ```env
+HOST=0.0.0.0
+PORT=2818
 MONGODB_URI=mongodb://127.0.0.1:27017/qiaichemy
 JWT_SECRET=replace-with-a-very-long-random-secret
 ```
+
+Default API base URL:
+
+- Local: `http://localhost:2818`
+- External: `http://<your-server-ip>:2818`
 
 ## Run
 

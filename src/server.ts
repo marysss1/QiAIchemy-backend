@@ -6,8 +6,11 @@ import { env } from './config/env';
 async function bootstrap(): Promise<void> {
   await connectToDatabase();
 
-  app.listen(env.PORT, () => {
-    console.log(`[server] Running at http://localhost:${env.PORT}`);
+  app.listen(env.PORT, env.HOST, () => {
+    console.log(`[server] Running at http://${env.HOST}:${env.PORT}`);
+    if (env.HOST === '0.0.0.0') {
+      console.log(`[server] External access: http://<your-server-ip>:${env.PORT}`);
+    }
   });
 }
 
