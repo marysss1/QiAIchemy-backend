@@ -1,0 +1,85 @@
+# =========================
+# Node modules
+# =========================
+node_modules/
+
+# =========================
+# Build output
+# =========================
+dist/
+build/
+out/
+
+# TypeScript
+*.tsbuildinfo
+
+# =========================
+# Logs
+# =========================
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+
+# =========================
+# Environment files
+# =========================
+.env
+.env.*
+!.env.example
+
+# =========================
+# Runtime files
+# =========================
+pids/
+*.pid
+*.seed
+*.pid.lock
+
+# =========================
+# Coverage
+# =========================
+coverage/
+
+# =========================
+# IDE / Editor
+# =========================
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# =========================
+# OS files
+# =========================
+.DS_Store
+
+# =========================
+# Dependency directories
+# =========================
+jspm_packages/
+
+# =========================
+# Cache
+# =========================
+.cache/
+.nyc_output/
+
+# =========================
+# Docker (if used)
+# =========================
+.docker/
+docker-compose.override.yml
+
+# =========================
+# PM2 (if used)
+# =========================
+ecosystem.config.js
+
+# =========================
+# Upload / temp
+# =========================
+uploads/
+tmp/
+temp/
