@@ -2,7 +2,7 @@ import bcrypt from 'bcryptjs';
 import { Request, Response } from 'express';
 import jwt from 'jsonwebtoken';
 import { z } from 'zod';
-import { env } from '../config/env';
+import { env, requireJwtSecret } from '../config/env';
 import { User, UserDocument } from '../models/User';
 
 const registerSchema = z.object({
@@ -17,9 +17,10 @@ const loginSchema = z.object({
 });
 
 function signToken(user: UserDocument): string {
+  const jwtSecret = requireJwtSecret();
   return jwt.sign(
     { userId: user.id, email: user.email },
-    env.JWT_SECRET,
+    jwtSecret,
     { expiresIn: env.JWT_EXPIRES_IN as jwt.SignOptions['expiresIn'] }
   );
 }

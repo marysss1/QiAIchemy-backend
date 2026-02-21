@@ -83,3 +83,8 @@ ecosystem.config.js
 uploads/
 tmp/
 temp/
+
+# =========================
+# RAG artifacts
+# =========================
+reports/

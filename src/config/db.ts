@@ -1,8 +1,8 @@
 import mongoose from 'mongoose';
-import { env } from './env';
+import { requireMongoUri } from './env';
 
 export async function connectToDatabase(): Promise<void> {
   mongoose.set('strictQuery', true);
-  await mongoose.connect(env.MONGODB_URI);
+  await mongoose.connect(requireMongoUri());
   console.log('[db] MongoDB connected');
 }

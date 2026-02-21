@@ -1,6 +1,6 @@
 import { NextFunction, Request, Response } from 'express';
 import jwt from 'jsonwebtoken';
-import { env } from '../config/env';
+import { requireJwtSecret } from '../config/env';
 
 export function requireAuth(req: Request, res: Response, next: NextFunction): void {
   const authorization = req.headers.authorization;
@@ -18,7 +18,8 @@ export function requireAuth(req: Request, res: Response, next: NextFunction): vo
   }
 
   try {
-    const payload = jwt.verify(token, env.JWT_SECRET) as {
+    const jwtSecret = requireJwtSecret();
+    const payload = jwt.verify(token, jwtSecret) as {
       userId: string;
       email: string;
     };
