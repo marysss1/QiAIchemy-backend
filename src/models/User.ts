@@ -1,6 +1,7 @@
 import { Document, Schema, model } from 'mongoose';
 
 export interface UserDocument extends Document {
+  username?: string;
   email: string;
   name?: string;
   passwordHash: string;
@@ -10,6 +11,14 @@ export interface UserDocument extends Document {
 
 const userSchema = new Schema<UserDocument>(
   {
+    username: {
+      type: String,
+      trim: true,
+      lowercase: true,
+      minlength: 3,
+      maxlength: 24,
+      sparse: true,
+    },
     email: {
       type: String,
       required: true,
@@ -32,6 +41,6 @@ const userSchema = new Schema<UserDocument>(
   }
 );
 
-userSchema.index({ email: 1 }, { unique: true });
+userSchema.index({ username: 1 }, { unique: true, sparse: true });
 
 export const User = model<UserDocument>('User', userSchema);

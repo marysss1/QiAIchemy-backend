@@ -58,6 +58,34 @@ function buildHealthContext(snapshot: HealthSnapshotDocument): string {
         'min'
       )}, 睡眠评分=${formatMetric(sleep.sleepScore)}`
     );
+
+    if (sleep.stageMinutesLast36h) {
+      lines.push(
+        `睡眠分期: Core=${formatMetric(
+          sleep.stageMinutesLast36h.asleepCoreMinutes,
+          'min'
+        )}, Deep=${formatMetric(sleep.stageMinutesLast36h.asleepDeepMinutes, 'min')}, REM=${formatMetric(
+          sleep.stageMinutesLast36h.asleepREMMinutes,
+          'min'
+        )}, 醒来=${formatMetric(sleep.stageMinutesLast36h.awakeMinutes, 'min')}`
+      );
+    }
+
+    if (Array.isArray(sleep.samplesLast36h) && sleep.samplesLast36h.length > 0) {
+      lines.push(`睡眠样本: ${sleep.samplesLast36h.length} 条`);
+    }
+
+    if (sleep.apnea) {
+      lines.push(
+        `睡眠呼吸暂停: 近30天事件=${formatMetric(
+          sleep.apnea.eventCountLast30d,
+          '次'
+        )}, 累计时长=${formatMetric(sleep.apnea.durationMinutesLast30d, 'min')}, 风险=${sleep.apnea.riskLevel ?? '-'}`
+      );
+      if (sleep.apnea.reminder) {
+        lines.push(`睡眠呼吸暂停提醒: ${sleep.apnea.reminder}`);
+      }
+    }
   }
 
   const heart = snapshot.heart;

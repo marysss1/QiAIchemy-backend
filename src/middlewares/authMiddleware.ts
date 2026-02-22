@@ -22,6 +22,7 @@ export function requireAuth(req: Request, res: Response, next: NextFunction): vo
     const payload = jwt.verify(token, jwtSecret) as {
       userId: string;
       email: string;
+      username?: string;
     };
 
     req.auth = payload;

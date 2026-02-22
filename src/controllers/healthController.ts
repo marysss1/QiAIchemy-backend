@@ -3,13 +3,55 @@ import { ZodError, z } from 'zod';
 import { HealthSnapshot } from '../models/HealthSnapshot';
 
 const optionalNumber = z.number().finite().optional();
+const optionalDateTime = z.string().datetime({ offset: true }).optional();
+
+const healthTrendPointSchema = z
+  .object({
+    timestamp: z.string().datetime({ offset: true }),
+    value: z.number().finite(),
+    unit: z.string().trim().min(1).max(24),
+  })
+  .passthrough();
+
+const healthSleepStageMinutesSchema = z
+  .object({
+    inBedMinutes: optionalNumber,
+    asleepUnspecifiedMinutes: optionalNumber,
+    awakeMinutes: optionalNumber,
+    asleepCoreMinutes: optionalNumber,
+    asleepDeepMinutes: optionalNumber,
+    asleepREMMinutes: optionalNumber,
+  })
+  .passthrough();
+
+const healthSleepSampleSchema = z
+  .object({
+    value: z.number().int(),
+    stage: z
+      .enum(['inBed', 'asleepUnspecified', 'awake', 'asleepCore', 'asleepDeep', 'asleepREM', 'unknown']),
+    startDate: z.string().datetime({ offset: true }),
+    endDate: z.string().datetime({ offset: true }),
+    sourceName: z.string().trim().max(200).optional(),
+    sourceBundleId: z.string().trim().max(200).optional(),
+  })
+  .passthrough();
+
+const healthSleepApneaDataSchema = z
+  .object({
+    eventCountLast30d: optionalNumber,
+    durationMinutesLast30d: optionalNumber,
+    latestEventAt: optionalDateTime,
+    riskLevel: z.enum(['none', 'watch', 'high', 'unknown']).optional(),
+    reminder: z.string().trim().max(500).optional(),
+  })
+  .passthrough();
 
 const healthWorkoutRecordSchema = z
   .object({
     activityTypeCode: z.number().int().optional(),
     activityTypeName: z.string().trim().max(100).optional(),
-    startDate: z.string().datetime({ offset: true }).optional(),
-    endDate: z.string().datetime({ offset: true }).optional(),
+    startDate: optionalDateTime,
+    endDate: optionalDateTime,
     durationMinutes: optionalNumber,
     totalEnergyKcal: optionalNumber,
     totalDistanceKm: optionalNumber,
@@ -25,6 +67,9 @@ const healthActivityDataSchema = z
     flightsClimbedToday: optionalNumber,
     exerciseMinutesToday: optionalNumber,
     standHoursToday: optionalNumber,
+    stepsHourlySeriesToday: z.array(healthTrendPointSchema).max(300).optional(),
+    activeEnergyHourlySeriesToday: z.array(healthTrendPointSchema).max(300).optional(),
+    exerciseMinutesHourlySeriesToday: z.array(healthTrendPointSchema).max(300).optional(),
   })
   .passthrough();
 
@@ -35,6 +80,9 @@ const healthSleepDataSchema = z
     awakeMinutesLast36h: optionalNumber,
     sampleCountLast36h: optionalNumber,
     sleepScore: optionalNumber,
+    stageMinutesLast36h: healthSleepStageMinutesSchema.optional(),
+    samplesLast36h: z.array(healthSleepSampleSchema).max(1000).optional(),
+    apnea: healthSleepApneaDataSchema.optional(),
   })
   .passthrough();
 
@@ -48,24 +96,29 @@ const healthHeartDataSchema = z
     atrialFibrillationBurdenPercent: optionalNumber,
     systolicBloodPressureMmhg: optionalNumber,
     diastolicBloodPressureMmhg: optionalNumber,
+    heartRateSeriesLast24h: z.array(healthTrendPointSchema).max(500).optional(),
+    heartRateVariabilitySeriesLast7d: z.array(healthTrendPointSchema).max(500).optional(),
   })
   .passthrough();
 
 const healthOxygenDataSchema = z
   .object({
     bloodOxygenPercent: optionalNumber,
+    bloodOxygenSeriesLast24h: z.array(healthTrendPointSchema).max(500).optional(),
   })
   .passthrough();
 
 const healthMetabolicDataSchema = z
   .object({
     bloodGlucoseMgDl: optionalNumber,
+    bloodGlucoseSeriesLast7d: z.array(healthTrendPointSchema).max(500).optional(),
   })
   .passthrough();
 
 const healthEnvironmentDataSchema = z
   .object({
     daylightMinutesToday: optionalNumber,
+    daylightSeriesLast7d: z.array(healthTrendPointSchema).max(500).optional(),
   })
   .passthrough();
 
@@ -74,6 +127,9 @@ const healthBodyDataSchema = z
     respiratoryRateBrpm: optionalNumber,
     bodyTemperatureCelsius: optionalNumber,
     bodyMassKg: optionalNumber,
+    respiratoryRateSeriesLast7d: z.array(healthTrendPointSchema).max(500).optional(),
+    bodyTemperatureSeriesLast7d: z.array(healthTrendPointSchema).max(500).optional(),
+    bodyMassSeriesLast30d: z.array(healthTrendPointSchema).max(1500).optional(),
   })
   .passthrough();
 

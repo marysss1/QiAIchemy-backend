@@ -1,5 +1,48 @@
 import { Document, Schema, Types, model } from 'mongoose';
 
+export type HealthSleepStage =
+  | 'inBed'
+  | 'asleepUnspecified'
+  | 'awake'
+  | 'asleepCore'
+  | 'asleepDeep'
+  | 'asleepREM'
+  | 'unknown';
+
+export interface HealthTrendPoint {
+  timestamp: Date;
+  value: number;
+  unit: string;
+}
+
+export interface HealthSleepSample {
+  value: number;
+  stage: HealthSleepStage;
+  startDate: Date;
+  endDate: Date;
+  sourceName?: string;
+  sourceBundleId?: string;
+}
+
+export interface HealthSleepStageMinutes {
+  inBedMinutes?: number;
+  asleepUnspecifiedMinutes?: number;
+  awakeMinutes?: number;
+  asleepCoreMinutes?: number;
+  asleepDeepMinutes?: number;
+  asleepREMMinutes?: number;
+}
+
+export type HealthSleepApneaRiskLevel = 'none' | 'watch' | 'high' | 'unknown';
+
+export interface HealthSleepApneaData {
+  eventCountLast30d?: number;
+  durationMinutesLast30d?: number;
+  latestEventAt?: Date;
+  riskLevel?: HealthSleepApneaRiskLevel;
+  reminder?: string;
+}
+
 export interface HealthWorkoutRecord {
   activityTypeCode?: number;
   activityTypeName?: string;
@@ -18,6 +61,9 @@ export interface HealthActivityData {
   flightsClimbedToday?: number;
   exerciseMinutesToday?: number;
   standHoursToday?: number;
+  stepsHourlySeriesToday?: HealthTrendPoint[];
+  activeEnergyHourlySeriesToday?: HealthTrendPoint[];
+  exerciseMinutesHourlySeriesToday?: HealthTrendPoint[];
 }
 
 export interface HealthSleepData {
@@ -26,6 +72,9 @@ export interface HealthSleepData {
   awakeMinutesLast36h?: number;
   sampleCountLast36h?: number;
   sleepScore?: number;
+  stageMinutesLast36h?: HealthSleepStageMinutes;
+  samplesLast36h?: HealthSleepSample[];
+  apnea?: HealthSleepApneaData;
 }
 
 export interface HealthHeartData {
@@ -37,24 +86,32 @@ export interface HealthHeartData {
   atrialFibrillationBurdenPercent?: number;
   systolicBloodPressureMmhg?: number;
   diastolicBloodPressureMmhg?: number;
+  heartRateSeriesLast24h?: HealthTrendPoint[];
+  heartRateVariabilitySeriesLast7d?: HealthTrendPoint[];
 }
 
 export interface HealthOxygenData {
   bloodOxygenPercent?: number;
+  bloodOxygenSeriesLast24h?: HealthTrendPoint[];
 }
 
 export interface HealthMetabolicData {
   bloodGlucoseMgDl?: number;
+  bloodGlucoseSeriesLast7d?: HealthTrendPoint[];
 }
 
 export interface HealthEnvironmentData {
   daylightMinutesToday?: number;
+  daylightSeriesLast7d?: HealthTrendPoint[];
 }
 
 export interface HealthBodyData {
   respiratoryRateBrpm?: number;
   bodyTemperatureCelsius?: number;
   bodyMassKg?: number;
+  respiratoryRateSeriesLast7d?: HealthTrendPoint[];
+  bodyTemperatureSeriesLast7d?: HealthTrendPoint[];
+  bodyMassSeriesLast30d?: HealthTrendPoint[];
 }
 
 export interface HealthSnapshotDocument extends Document {
@@ -85,6 +142,56 @@ const workoutSchema = new Schema<HealthWorkoutRecord>(
     durationMinutes: Number,
     totalEnergyKcal: Number,
     totalDistanceKm: Number,
+  },
+  { _id: false }
+);
+
+const trendPointSchema = new Schema<HealthTrendPoint>(
+  {
+    timestamp: Date,
+    value: Number,
+    unit: String,
+  },
+  { _id: false }
+);
+
+const sleepSampleSchema = new Schema<HealthSleepSample>(
+  {
+    value: Number,
+    stage: {
+      type: String,
+      enum: ['inBed', 'asleepUnspecified', 'awake', 'asleepCore', 'asleepDeep', 'asleepREM', 'unknown'],
+    },
+    startDate: Date,
+    endDate: Date,
+    sourceName: String,
+    sourceBundleId: String,
+  },
+  { _id: false }
+);
+
+const sleepStageMinutesSchema = new Schema<HealthSleepStageMinutes>(
+  {
+    inBedMinutes: Number,
+    asleepUnspecifiedMinutes: Number,
+    awakeMinutes: Number,
+    asleepCoreMinutes: Number,
+    asleepDeepMinutes: Number,
+    asleepREMMinutes: Number,
+  },
+  { _id: false }
+);
+
+const sleepApneaSchema = new Schema<HealthSleepApneaData>(
+  {
+    eventCountLast30d: Number,
+    durationMinutesLast30d: Number,
+    latestEventAt: Date,
+    riskLevel: {
+      type: String,
+      enum: ['none', 'watch', 'high', 'unknown'],
+    },
+    reminder: String,
   },
   { _id: false }
 );
@@ -128,6 +235,18 @@ const healthSnapshotSchema = new Schema<HealthSnapshotDocument>(
       flightsClimbedToday: Number,
       exerciseMinutesToday: Number,
       standHoursToday: Number,
+      stepsHourlySeriesToday: {
+        type: [trendPointSchema],
+        default: undefined,
+      },
+      activeEnergyHourlySeriesToday: {
+        type: [trendPointSchema],
+        default: undefined,
+      },
+      exerciseMinutesHourlySeriesToday: {
+        type: [trendPointSchema],
+        default: undefined,
+      },
     },
     sleep: {
       inBedMinutesLast36h: Number,
@@ -135,6 +254,18 @@ const healthSnapshotSchema = new Schema<HealthSnapshotDocument>(
       awakeMinutesLast36h: Number,
       sampleCountLast36h: Number,
       sleepScore: Number,
+      stageMinutesLast36h: {
+        type: sleepStageMinutesSchema,
+        default: undefined,
+      },
+      samplesLast36h: {
+        type: [sleepSampleSchema],
+        default: undefined,
+      },
+      apnea: {
+        type: sleepApneaSchema,
+        default: undefined,
+      },
     },
     heart: {
       latestHeartRateBpm: Number,
@@ -145,20 +276,52 @@ const healthSnapshotSchema = new Schema<HealthSnapshotDocument>(
       atrialFibrillationBurdenPercent: Number,
       systolicBloodPressureMmhg: Number,
       diastolicBloodPressureMmhg: Number,
+      heartRateSeriesLast24h: {
+        type: [trendPointSchema],
+        default: undefined,
+      },
+      heartRateVariabilitySeriesLast7d: {
+        type: [trendPointSchema],
+        default: undefined,
+      },
     },
     oxygen: {
       bloodOxygenPercent: Number,
+      bloodOxygenSeriesLast24h: {
+        type: [trendPointSchema],
+        default: undefined,
+      },
     },
     metabolic: {
       bloodGlucoseMgDl: Number,
+      bloodGlucoseSeriesLast7d: {
+        type: [trendPointSchema],
+        default: undefined,
+      },
     },
     environment: {
       daylightMinutesToday: Number,
+      daylightSeriesLast7d: {
+        type: [trendPointSchema],
+        default: undefined,
+      },
     },
     body: {
       respiratoryRateBrpm: Number,
       bodyTemperatureCelsius: Number,
       bodyMassKg: Number,
+      respiratoryRateSeriesLast7d: {
+        type: [trendPointSchema],
+        default: undefined,
+      },
+      bodyTemperatureSeriesLast7d: {
+        type: [trendPointSchema],
+        default: undefined,
+      },
+      bodyMassSeriesLast30d: {
+        type: [trendPointSchema],
+        default: undefined,
+      },
     },
     workouts: {
       type: [workoutSchema],
