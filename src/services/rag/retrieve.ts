@@ -36,6 +36,27 @@ type CandidateChunk = {
   keywords?: string[];
 };
 
+function clamp(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value));
+}
+
+function computeGraphWeight(embeddingEnabled: boolean, confidence: number): number {
+  if (confidence < env.RAG_GRAPH_MIN_CONFIDENCE) {
+    return 0;
+  }
+  if (embeddingEnabled) {
+    // Keep graph as an assistive signal; avoid overpowering semantic + lexical relevance.
+    return clamp(0.04 + confidence * 0.12, 0.04, env.RAG_GRAPH_MAX_WEIGHT);
+  }
+  return clamp(0.05 + confidence * 0.08, 0.05, env.RAG_GRAPH_MAX_WEIGHT);
+}
+
+function graphDocGate(lexicalScore: number, embeddingScore: number): number {
+  // Penalize graph-only matches to reduce drift on single-hop questions.
+  const gate = lexicalScore * 2.4 + embeddingScore * 0.9 + 0.08;
+  return clamp(gate, 0, 1);
+}
+
 function escapeRegExp(input: string): string {
   return input.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
@@ -123,11 +144,21 @@ export async function retrieveRelevantChunks(
     const docTokens = candidate.keywords?.length ? candidate.keywords : tokenizeForSearch(candidate.text);
     const lexicalScore = lexicalSimilarity(queryTokens, docTokens);
     const embeddingScore = cosineSimilarity(queryEmbedding, candidate.embedding ?? []);
-    const graphScore = graphTokenSimilarity(docTokens, graphFeatures.tokenBoost);
-    const score =
-      queryEmbedding.length > 0
-        ? embeddingScore * 0.62 + lexicalScore * 0.2 + graphScore * 0.18
-        : lexicalScore * 0.7 + graphScore * 0.3;
+    const rawGraphScore = graphTokenSimilarity(docTokens, graphFeatures.tokenBoost);
+    const gatedGraphScore = rawGraphScore * graphDocGate(lexicalScore, embeddingScore);
+    const graphWeight = computeGraphWeight(queryEmbedding.length > 0, graphFeatures.confidence);
+
+    let embeddingWeight = queryEmbedding.length > 0 ? 0.7 : 0;
+    let lexicalWeight = queryEmbedding.length > 0 ? 0.3 : 1;
+
+    if (queryEmbedding.length > 0) {
+      embeddingWeight = clamp(0.76 - graphWeight * 0.85, 0.58, 0.76);
+      lexicalWeight = clamp(1 - embeddingWeight - graphWeight, 0.16, 0.34);
+    } else {
+      lexicalWeight = clamp(1 - graphWeight, 0.8, 1);
+    }
+
+    const score = embeddingScore * embeddingWeight + lexicalScore * lexicalWeight + gatedGraphScore * graphWeight;
 
     return {
       id: String(candidate._id),
@@ -140,7 +171,7 @@ export async function retrieveRelevantChunks(
       score,
       embeddingScore,
       lexicalScore,
-      graphScore,
+      graphScore: gatedGraphScore,
       rrfScore: 0,
     };
   });
@@ -152,16 +183,20 @@ export async function retrieveRelevantChunks(
   const embRank = new Map(byEmbedding.map((item, idx) => [item.id, idx + 1]));
   const lexRank = new Map(byLexical.map((item, idx) => [item.id, idx + 1]));
   const graphRank = new Map(byGraph.map((item, idx) => [item.id, idx + 1]));
+  const graphRankWeight =
+    graphFeatures.confidence < env.RAG_GRAPH_MIN_CONFIDENCE
+      ? 0
+      : clamp(graphFeatures.confidence * env.RAG_GRAPH_RRF_WEIGHT, 0, 1);
 
   const merged = scored.map((item) => {
     const rrfScore =
       reciprocalRankFusion(embRank.get(item.id) ?? 999) +
       reciprocalRankFusion(lexRank.get(item.id) ?? 999) +
-      reciprocalRankFusion(graphRank.get(item.id) ?? 999);
+      reciprocalRankFusion(graphRank.get(item.id) ?? 999) * graphRankWeight;
     return {
       ...item,
       rrfScore,
-      score: item.score * 0.7 + rrfScore * 0.3,
+      score: item.score * 0.82 + rrfScore * 0.18,
     };
   });
 

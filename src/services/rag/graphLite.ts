@@ -29,6 +29,7 @@ type GraphRuntime = {
   nodeMap: Map<string, GraphNode>;
   adj: Map<string, Array<{ to: string; weight: number }>>;
   tokenToNodeIds: Map<string, string[]>;
+  tokenDf: Map<string, number>;
 };
 
 let graphCache: GraphRuntime | null = null;
@@ -68,6 +69,7 @@ function buildRuntime(doc: GraphLiteDoc): GraphRuntime {
   const nodeMap = new Map<string, GraphNode>();
   const adj = new Map<string, Array<{ to: string; weight: number }>>();
   const tokenToNodeIds = new Map<string, string[]>();
+  const tokenDf = new Map<string, number>();
 
   for (const node of doc.nodes) {
     if (!node.id || !node.label) {
@@ -79,8 +81,12 @@ function buildRuntime(doc: GraphLiteDoc): GraphRuntime {
     }
     const text = [node.label, ...(node.aliases ?? [])].join(' ');
     const tokens = tokenizeForSearch(text);
+    const tokenSet = new Set(tokens);
     for (const token of tokens) {
       uniquePushMap(tokenToNodeIds, token, node.id);
+    }
+    for (const token of tokenSet) {
+      tokenDf.set(token, (tokenDf.get(token) ?? 0) + 1);
     }
   }
 
@@ -100,6 +106,7 @@ function buildRuntime(doc: GraphLiteDoc): GraphRuntime {
     nodeMap,
     adj,
     tokenToNodeIds,
+    tokenDf,
   };
 }
 
@@ -120,16 +127,43 @@ async function getGraph(): Promise<GraphRuntime | null> {
   }
 }
 
-function buildSeedScores(graph: GraphRuntime, queryText: string, graphContext?: string): Map<string, number> {
+function parseChineseBigramCount(text: string): number {
+  const hanChars = [...text].filter((char) => /\p{Script=Han}/u.test(char));
+  return Math.max(0, hanChars.length - 1);
+}
+
+function estimateQueryComplexity(queryText: string): number {
+  const normalized = queryText.toLowerCase();
+  const multiHopHints = ['同时', '并且', '以及', '关联', '关系', '如何', '怎么', '影响', '为什么', '综合'];
+  let hintCount = 0;
+  for (const hint of multiHopHints) {
+    if (normalized.includes(hint)) {
+      hintCount += 1;
+    }
+  }
+
+  const lengthScore = clamp(normalized.length / 60, 0, 1);
+  const bigramScore = clamp(parseChineseBigramCount(normalized) / 24, 0, 1);
+  const hintScore = clamp(hintCount / 4, 0, 1);
+  return clamp(hintScore * 0.5 + lengthScore * 0.25 + bigramScore * 0.25, 0, 1);
+}
+
+function buildSeedScores(
+  graph: GraphRuntime,
+  queryText: string,
+  graphContext?: string
+): { seeds: Map<string, number>; matchedTokens: Set<string>; allQueryTokens: string[] } {
   const seeds = new Map<string, number>();
   const merged = [queryText, graphContext ?? ''].join('\n');
   const tokens = tokenizeForSearch(merged);
+  const matchedTokens = new Set<string>();
 
   for (const token of tokens) {
     const ids = graph.tokenToNodeIds.get(token);
     if (!ids?.length) {
       continue;
     }
+    matchedTokens.add(token);
     const incr = 1 / ids.length;
     for (const id of ids) {
       seeds.set(id, (seeds.get(id) ?? 0) + incr);
@@ -137,20 +171,20 @@ function buildSeedScores(graph: GraphRuntime, queryText: string, graphContext?: 
   }
 
   if (seeds.size === 0) {
-    return seeds;
+    return { seeds, matchedTokens, allQueryTokens: tokenizeForSearch(queryText) };
   }
 
   const max = Math.max(...seeds.values());
   for (const [id, value] of seeds) {
     seeds.set(id, value / max);
   }
-  return seeds;
+  return { seeds, matchedTokens, allQueryTokens: tokenizeForSearch(queryText) };
 }
 
 function runPersonalizedPageRank(
   graph: GraphRuntime,
   seeds: Map<string, number>,
-  alpha = env.RAG_GRAPH_PPR_ALPHA,
+  alpha: number,
   maxIter = 30
 ): Map<string, number> {
   const nodes = graph.nodes;
@@ -199,8 +233,13 @@ function runPersonalizedPageRank(
   return scores;
 }
 
-function buildTokenBoostMap(graph: GraphRuntime, nodeScores: Map<string, number>): Map<string, number> {
-  const sorted = [...nodeScores.entries()].sort((a, b) => b[1] - a[1]).slice(0, env.RAG_GRAPH_TOP_NODES);
+function buildTokenBoostMap(
+  graph: GraphRuntime,
+  nodeScores: Map<string, number>,
+  topNodeLimit: number
+): Map<string, number> {
+  const sorted = [...nodeScores.entries()].sort((a, b) => b[1] - a[1]).slice(0, topNodeLimit);
+  const totalNodeCount = Math.max(graph.nodes.length, 1);
   const tokenBoost = new Map<string, number>();
 
   for (const [nodeId, score] of sorted) {
@@ -210,12 +249,22 @@ function buildTokenBoostMap(graph: GraphRuntime, nodeScores: Map<string, number>
     }
     const tokens = tokenizeForSearch([node.label, ...(node.aliases ?? [])].join(' '));
     for (const token of tokens) {
+      const df = graph.tokenDf.get(token) ?? 1;
+      const idf = Math.log(1 + totalNodeCount / df);
+      const weighted = score * idf;
       const prev = tokenBoost.get(token) ?? 0;
-      tokenBoost.set(token, Math.max(prev, score));
+      tokenBoost.set(token, Math.max(prev, weighted));
     }
   }
 
   return tokenBoost;
+}
+
+function sumTopScores(nodeScores: Map<string, number>, topN: number): number {
+  return [...nodeScores.values()]
+    .sort((a, b) => b - a)
+    .slice(0, topN)
+    .reduce((sum, v) => sum + v, 0);
 }
 
 export async function computeGraphQueryFeatures(
@@ -224,29 +273,66 @@ export async function computeGraphQueryFeatures(
 ): Promise<{
   tokenBoost: Map<string, number>;
   topNodes: Array<{ nodeId: string; label: string; score: number }>;
+  confidence: number;
+  adaptiveAlpha: number;
+  adaptiveTopNodes: number;
 }> {
   const graph = await getGraph();
   if (!graph) {
-    return { tokenBoost: new Map(), topNodes: [] };
+    return {
+      tokenBoost: new Map(),
+      topNodes: [],
+      confidence: 0,
+      adaptiveAlpha: env.RAG_GRAPH_PPR_ALPHA,
+      adaptiveTopNodes: env.RAG_GRAPH_TOP_NODES,
+    };
   }
 
-  const seeds = buildSeedScores(graph, queryText, graphContext);
+  const complexity = estimateQueryComplexity(queryText);
+  const adaptiveAlpha = clamp(
+    env.RAG_GRAPH_PPR_ALPHA - (1 - complexity) * 0.18,
+    0.6,
+    env.RAG_GRAPH_PPR_ALPHA
+  );
+  const adaptiveTopNodes = Math.max(
+    4,
+    Math.min(env.RAG_GRAPH_TOP_NODES, Math.round(env.RAG_GRAPH_TOP_NODES * (0.45 + complexity * 0.55)))
+  );
+
+  const { seeds, matchedTokens, allQueryTokens } = buildSeedScores(graph, queryText, graphContext);
   if (!seeds.size) {
-    return { tokenBoost: new Map(), topNodes: [] };
+    return {
+      tokenBoost: new Map(),
+      topNodes: [],
+      confidence: 0,
+      adaptiveAlpha,
+      adaptiveTopNodes,
+    };
   }
 
-  const nodeScores = runPersonalizedPageRank(graph, seeds);
-  const tokenBoost = buildTokenBoostMap(graph, nodeScores);
+  const nodeScores = runPersonalizedPageRank(graph, seeds, adaptiveAlpha);
+  const tokenBoost = buildTokenBoostMap(graph, nodeScores, adaptiveTopNodes);
+  const seedCoverage = matchedTokens.size / Math.max(allQueryTokens.length, 1);
+  const top3Mass = sumTopScores(nodeScores, 3);
+  const topNMass = sumTopScores(nodeScores, adaptiveTopNodes);
+  const concentration = topNMass > 0 ? top3Mass / topNMass : 0;
+  const confidence = clamp(seedCoverage * 0.45 + concentration * 0.35 + complexity * 0.2, 0, 1);
   const topNodes = [...nodeScores.entries()]
     .sort((a, b) => b[1] - a[1])
-    .slice(0, env.RAG_GRAPH_TOP_NODES)
+    .slice(0, adaptiveTopNodes)
     .map(([nodeId, score]) => ({
       nodeId,
       label: graph.nodeMap.get(nodeId)?.label ?? nodeId,
       score: Number(score.toFixed(6)),
     }));
 
-  return { tokenBoost, topNodes };
+  return {
+    tokenBoost,
+    topNodes,
+    confidence: Number(confidence.toFixed(6)),
+    adaptiveAlpha: Number(adaptiveAlpha.toFixed(6)),
+    adaptiveTopNodes,
+  };
 }
 
 export function graphTokenSimilarity(docTokens: string[], tokenBoost: Map<string, number>): number {

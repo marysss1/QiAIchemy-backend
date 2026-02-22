@@ -13,6 +13,7 @@
     "rag:eval": "ts-node src/scripts/runRagEval.ts",
     "rag:eval:strict": "RAG_EVAL_SET_PATH=data/eval/tcm_eval_200_graph_youth_strict_multihop_v1.jsonl ts-node src/scripts/runRagEval.ts",
     "rag:eval:summary": "ts-node src/scripts/summarizeRagEval.ts",
+    "rag:eval:compare": "ts-node src/scripts/compareRagEval.ts",
     "knowledge:build": "ts-node src/scripts/buildKnowledgeCorpus.ts"
   },
   "keywords": [],
