@@ -27,6 +27,7 @@ const healthChatSchema = z.object({
 const askSchema = z.object({
   question: z.string().trim().min(1).max(4000),
   topK: z.coerce.number().int().positive().max(20).optional(),
+  style: z.enum(['readable', 'default']).optional(),
 });
 
 function formatMetric(value: number | undefined, unit = ''): string {
@@ -254,11 +255,18 @@ export async function simpleAsk(req: Request, res: Response): Promise<void> {
   }
 
   try {
-    const result = await answerWithRag(parsed.data.question, parsed.data.topK ?? env.RAG_TOP_K);
+    const style = parsed.data.style ?? 'readable';
+    const result = await answerWithRagPersonalized({
+      question: parsed.data.question,
+      topK: parsed.data.topK ?? env.RAG_TOP_K,
+      responseStyle: style,
+      temperature: 0,
+    });
     res.status(200).json({
       ...result,
       profile: {
         name: 'graph-rag-best-v1',
+        responseStyle: style,
         embeddingModel: env.EMBEDDING_MODEL,
         graphPath: env.RAG_GRAPH_PATH,
         pprAlpha: env.RAG_GRAPH_PPR_ALPHA,
@@ -266,7 +274,7 @@ export async function simpleAsk(req: Request, res: Response): Promise<void> {
         minConfidence: env.RAG_GRAPH_MIN_CONFIDENCE,
         maxWeight: env.RAG_GRAPH_MAX_WEIGHT,
         rrfWeight: env.RAG_GRAPH_RRF_WEIGHT,
-        temperature: env.LLM_TEMPERATURE,
+        temperature: 0,
       },
     });
   } catch (error) {

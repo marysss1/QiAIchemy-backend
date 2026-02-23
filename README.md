@@ -201,9 +201,14 @@ npm run rag:ingest -- --dir data/knowledge
 ```json
 {
   "question": "最近总是失眠和焦虑，给我一个7天调理建议",
-  "topK": 6
+  "topK": 6,
+  "style": "readable"
 }
 ```
+
+`style` supports:
+- `readable` (default): fixed readable structure for product UI
+- `default`: keep generic answer style
 
 Response includes Graph-RAG profile parameters used by the backend.
 

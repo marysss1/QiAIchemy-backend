@@ -22,6 +22,8 @@ export interface RagAnswerResult {
   model: string;
 }
 
+export type RagResponseStyle = 'default' | 'readable';
+
 export interface ConversationTurn {
   role: 'user' | 'assistant';
   content: string;
@@ -32,9 +34,12 @@ export interface RagPersonalizedOptions {
   topK?: number;
   conversationHistory?: ConversationTurn[];
   healthContext?: string;
+  responseStyle?: RagResponseStyle;
+  temperature?: number;
+  maxTokens?: number;
 }
 
-function buildSystemPrompt(personalized: boolean): string {
+function buildSystemPrompt(personalized: boolean, responseStyle: RagResponseStyle): string {
   const lines = [
     '你是 QiAIchemy 的中医知识助手。',
     '回答必须严格基于提供的参考资料，不要编造。若证据不足，明确说“根据当前资料无法确定”。',
@@ -45,6 +50,25 @@ function buildSystemPrompt(personalized: boolean): string {
 
   if (personalized) {
     lines.push('如果提供了用户健康快照，请结合该数据给出个性化建议，并明确“基于用户数据”的依据，避免过度推断。');
+  }
+
+  if (responseStyle === 'readable') {
+    lines.push(
+      '请严格按以下 Markdown 结构输出，且不要添加其他一级/二级标题：',
+      '### 一句话结论',
+      '1 句话，直接回答用户问题，结尾带引用标签。',
+      '### 证据链（指标→症状→证候）',
+      '2-4 条短句，每条使用“→”连接，并带引用标签。',
+      '### 7天执行计划',
+      '按 D1~D7 给出可执行动作，优先量化（时间/频次/分钟）。',
+      '### 每日监测KPI',
+      '列 3-5 个指标，不要空泛。',
+      '### 红旗与就医',
+      '给 1-2 条需要线下就医的触发条件。',
+      '### 引用对照',
+      '按 [C#] 对应一句来源说明。',
+      '总字数控制在 260~420 字，避免重复与套话。'
+    );
   }
 
   return lines.join('\n');
@@ -113,6 +137,7 @@ export async function answerWithRagPersonalized(
   options: RagPersonalizedOptions
 ): Promise<RagAnswerResult> {
   const topK = options.topK ?? env.RAG_TOP_K;
+  const responseStyle = options.responseStyle ?? 'default';
   const trimmedQuestion = options.question.trim();
   if (!trimmedQuestion) {
     throw new Error('Question is empty');
@@ -132,7 +157,7 @@ export async function answerWithRagPersonalized(
     (options.conversationHistory && options.conversationHistory.length > 0) || options.healthContext
   );
   const messages: ChatCompletionMessageParam[] = [
-    { role: 'system', content: buildSystemPrompt(personalized) },
+    { role: 'system', content: buildSystemPrompt(personalized, responseStyle) },
     {
       role: 'user',
       content: buildUserContent(trimmedQuestion, evidence, options.conversationHistory, options.healthContext),
@@ -140,8 +165,8 @@ export async function answerWithRagPersonalized(
   ];
 
   const completion = await createChatCompletion(messages, {
-    temperature: env.LLM_TEMPERATURE,
-    max_tokens: env.LLM_MAX_TOKENS,
+    temperature: options.temperature ?? env.LLM_TEMPERATURE,
+    max_tokens: options.maxTokens ?? env.LLM_MAX_TOKENS,
   });
 
   const answer = completion.choices[0]?.message?.content?.trim() || '根据当前资料无法确定。';
