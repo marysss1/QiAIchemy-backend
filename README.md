@@ -47,11 +47,15 @@ JWT_SECRET=replace-with-a-very-long-random-secret
 GREATROUTER_API_KEY=sk-gr-xxxx
 GREATROUTER_BASE_URL=https://endpoint.wendalog.com
 LLM_CHAT_MODEL=gpt-4o
-EMBEDDING_MODEL=text-embedding-3-large
+LLM_TEMPERATURE=0
+EMBEDDING_MODEL=text-embedding-3-small
 RAG_INGEST_DIR=data/knowledge
 RAG_GRAPH_PATH=data/graph/tcm_graph_lite.json
 RAG_GRAPH_PPR_ALPHA=0.85
 RAG_GRAPH_TOP_NODES=12
+RAG_GRAPH_MIN_CONFIDENCE=0.24
+RAG_GRAPH_MAX_WEIGHT=0.12
+RAG_GRAPH_RRF_WEIGHT=0.40
 RAG_TOP_K=6
 RAG_EVAL_SET_PATH=data/eval/tcm_eval_120.jsonl
 RAG_EVAL_REPORT_DIR=reports
@@ -184,10 +188,24 @@ npm run rag:ingest -- --dir data/knowledge
 - `POST /api/auth/register`
 - `POST /api/auth/login`
 - `GET /api/auth/me` (Bearer token)
+- `POST /api/agent/ask` (No auth, minimal Graph-RAG question API)
 - `POST /api/agent/chat` (Bearer token, Agent + RAG + citations)
 - `POST /api/agent/chat/health` (Bearer token, conversation + latest HealthSnapshot + RAG + citations)
 - `POST /api/health/snapshots` (Bearer token, upload HealthKit snapshot with server timestamp)
 - `GET /health`
+
+### Minimal ask API (recommended for quick integration)
+
+`POST /api/agent/ask`
+
+```json
+{
+  "question": "最近总是失眠和焦虑，给我一个7天调理建议",
+  "topK": 6
+}
+```
+
+Response includes Graph-RAG profile parameters used by the backend.
 
 ### Personalized Agent Example
 
