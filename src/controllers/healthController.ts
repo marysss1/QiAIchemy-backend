@@ -216,3 +216,43 @@ export async function uploadHealthSnapshot(req: Request, res: Response): Promise
     res.status(500).json({ message: 'Failed to save health snapshot' });
   }
 }
+
+export async function getLatestHealthSnapshot(req: Request, res: Response): Promise<void> {
+  if (!req.auth?.userId) {
+    res.status(401).json({ message: 'Unauthorized' });
+    return;
+  }
+
+  try {
+    const latest = await HealthSnapshot.findOne({ userId: req.auth.userId })
+      .sort({ uploadedAt: -1 })
+      .exec();
+
+    if (!latest) {
+      res.status(404).json({ message: 'No health snapshot found' });
+      return;
+    }
+
+    res.status(200).json({
+      snapshot: {
+        id: latest.id,
+        source: latest.source,
+        authorized: latest.authorized,
+        generatedAt: latest.generatedAt.toISOString(),
+        uploadedAt: latest.uploadedAt.toISOString(),
+        note: latest.note ?? '',
+        activity: latest.activity,
+        sleep: latest.sleep,
+        heart: latest.heart,
+        oxygen: latest.oxygen,
+        metabolic: latest.metabolic,
+        environment: latest.environment,
+        body: latest.body,
+        workouts: latest.workouts ?? [],
+      },
+    });
+  } catch (error) {
+    console.error('[health] get latest failed:', error);
+    res.status(500).json({ message: 'Failed to load latest health snapshot' });
+  }
+}

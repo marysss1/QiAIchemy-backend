@@ -18,10 +18,29 @@ const conversationTurnSchema = z.object({
   content: z.string().trim().min(1).max(2000),
 });
 
+const clientHealthSnapshotSchema = z
+  .object({
+    source: z.enum(['healthkit', 'mock']).optional(),
+    authorized: z.boolean().optional(),
+    generatedAt: z.string().datetime({ offset: true }).optional(),
+    uploadedAt: z.string().datetime({ offset: true }).optional(),
+    note: z.string().trim().max(1000).optional(),
+    activity: z.record(z.unknown()).optional(),
+    sleep: z.record(z.unknown()).optional(),
+    heart: z.record(z.unknown()).optional(),
+    oxygen: z.record(z.unknown()).optional(),
+    metabolic: z.record(z.unknown()).optional(),
+    environment: z.record(z.unknown()).optional(),
+    body: z.record(z.unknown()).optional(),
+    workouts: z.array(z.record(z.unknown())).optional(),
+  })
+  .passthrough();
+
 const healthChatSchema = z.object({
   message: z.string().trim().min(1).max(4000),
   topK: z.coerce.number().int().positive().max(20).optional(),
   history: z.array(conversationTurnSchema).max(20).optional(),
+  latestHealthSnapshot: clientHealthSnapshotSchema.optional(),
 });
 
 const askSchema = z.object({
@@ -30,11 +49,150 @@ const askSchema = z.object({
   style: z.enum(['readable', 'default']).optional(),
 });
 
+type ClientHealthSnapshotPayload = z.infer<typeof clientHealthSnapshotSchema>;
+
 function formatMetric(value: number | undefined, unit = ''): string {
   if (typeof value !== 'number' || !Number.isFinite(value)) {
     return '-';
   }
   return `${value}${unit}`;
+}
+
+function toNumber(value: unknown): number | undefined {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    return undefined;
+  }
+  return value;
+}
+
+function toRecord(value: unknown): Record<string, unknown> | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return undefined;
+  }
+  return value as Record<string, unknown>;
+}
+
+function buildHealthContextFromClientSnapshot(snapshot: ClientHealthSnapshotPayload): string {
+  const lines: string[] = [];
+  lines.push(`来源: ${snapshot.source ?? 'unknown'}, 授权状态: ${snapshot.authorized ? '已授权' : '未授权'}`);
+
+  if (snapshot.generatedAt) {
+    lines.push(`采集时间: ${snapshot.generatedAt}`);
+  }
+  if (snapshot.uploadedAt) {
+    lines.push(`上传时间: ${snapshot.uploadedAt}`);
+  }
+
+  const activity = toRecord(snapshot.activity);
+  if (activity) {
+    lines.push(
+      `活动: 步数=${formatMetric(toNumber(activity.stepsToday), '步')}, 距离=${formatMetric(
+        toNumber(activity.distanceWalkingRunningKmToday),
+        'km'
+      )}, 活动能量=${formatMetric(toNumber(activity.activeEnergyKcalToday), 'kcal')}, 运动分钟=${formatMetric(
+        toNumber(activity.exerciseMinutesToday),
+        'min'
+      )}`
+    );
+  }
+
+  const sleep = toRecord(snapshot.sleep);
+  if (sleep) {
+    lines.push(
+      `睡眠: 入睡时长=${formatMetric(toNumber(sleep.asleepMinutesLast36h), 'min')}, 在床时长=${formatMetric(
+        toNumber(sleep.inBedMinutesLast36h),
+        'min'
+      )}, 睡眠评分=${formatMetric(toNumber(sleep.sleepScore))}`
+    );
+
+    const stage = toRecord(sleep.stageMinutesLast36h);
+    if (stage) {
+      lines.push(
+        `睡眠分期: Core=${formatMetric(
+          toNumber(stage.asleepCoreMinutes),
+          'min'
+        )}, Deep=${formatMetric(toNumber(stage.asleepDeepMinutes), 'min')}, REM=${formatMetric(
+          toNumber(stage.asleepREMMinutes),
+          'min'
+        )}, 醒来=${formatMetric(toNumber(stage.awakeMinutes), 'min')}`
+      );
+    }
+
+    const apnea = toRecord(sleep.apnea);
+    if (apnea) {
+      lines.push(
+        `睡眠呼吸暂停: 近30天事件=${formatMetric(
+          toNumber(apnea.eventCountLast30d),
+          '次'
+        )}, 累计时长=${formatMetric(toNumber(apnea.durationMinutesLast30d), 'min')}, 风险=${
+          typeof apnea.riskLevel === 'string' ? apnea.riskLevel : '-'
+        }`
+      );
+      if (typeof apnea.reminder === 'string' && apnea.reminder.trim().length > 0) {
+        lines.push(`睡眠呼吸暂停提醒: ${apnea.reminder.trim()}`);
+      }
+    }
+  }
+
+  const heart = toRecord(snapshot.heart);
+  if (heart) {
+    lines.push(
+      `心脏: 最新心率=${formatMetric(toNumber(heart.latestHeartRateBpm), 'bpm')}, 静息心率=${formatMetric(
+        toNumber(heart.restingHeartRateBpm),
+        'bpm'
+      )}, HRV=${formatMetric(toNumber(heart.heartRateVariabilityMs), 'ms')}, 收缩压/舒张压=${formatMetric(
+        toNumber(heart.systolicBloodPressureMmhg),
+        'mmHg'
+      )}/${formatMetric(toNumber(heart.diastolicBloodPressureMmhg), 'mmHg')}`
+    );
+  }
+
+  const oxygen = toRecord(snapshot.oxygen);
+  if (oxygen) {
+    lines.push(`血氧: ${formatMetric(toNumber(oxygen.bloodOxygenPercent), '%')}`);
+  }
+
+  const metabolic = toRecord(snapshot.metabolic);
+  if (metabolic) {
+    lines.push(`血糖: ${formatMetric(toNumber(metabolic.bloodGlucoseMgDl), 'mg/dL')}`);
+  }
+
+  const environment = toRecord(snapshot.environment);
+  if (environment) {
+    lines.push(`日照时长: ${formatMetric(toNumber(environment.daylightMinutesToday), 'min')}`);
+  }
+
+  const body = toRecord(snapshot.body);
+  if (body) {
+    lines.push(
+      `身体指标: 呼吸率=${formatMetric(toNumber(body.respiratoryRateBrpm), 'brpm')}, 体温=${formatMetric(
+        toNumber(body.bodyTemperatureCelsius),
+        '°C'
+      )}, 体重=${formatMetric(toNumber(body.bodyMassKg), 'kg')}`
+    );
+  }
+
+  if (Array.isArray(snapshot.workouts) && snapshot.workouts.length > 0) {
+    const recent = snapshot.workouts[0];
+    lines.push(
+      `运动记录: 共${snapshot.workouts.length}条, 最近一次=${
+        typeof recent.activityTypeName === 'string'
+          ? recent.activityTypeName
+          : typeof recent.activityTypeCode === 'number'
+          ? String(recent.activityTypeCode)
+          : '未知'
+      }, 时长=${formatMetric(toNumber(recent.durationMinutes), 'min')}, 距离=${formatMetric(
+        toNumber(recent.totalDistanceKm),
+        'km'
+      )}`
+    );
+  }
+
+  if (snapshot.note) {
+    lines.push(`备注: ${snapshot.note}`);
+  }
+
+  return lines.join('\n');
 }
 
 function buildHealthContext(snapshot: HealthSnapshotDocument): string {
@@ -205,11 +363,44 @@ export async function ragHealthChat(req: Request, res: Response): Promise<void> 
   }
 
   try {
-    const latestSnapshot = await HealthSnapshot.findOne({ userId: req.auth.userId })
-      .sort({ uploadedAt: -1 })
-      .exec();
+    const clientSnapshot = parsed.data.latestHealthSnapshot;
+    let latestSnapshot: HealthSnapshotDocument | null = null;
+    let healthContext: string | undefined;
+    let healthSnapshotUsed:
+      | {
+          id: string | null;
+          source: string;
+          generatedAt: string | null;
+          uploadedAt: string | null;
+          from: 'client_payload' | 'db';
+        }
+      | null = null;
 
-    const healthContext = latestSnapshot ? buildHealthContext(latestSnapshot) : undefined;
+    if (clientSnapshot) {
+      healthContext = buildHealthContextFromClientSnapshot(clientSnapshot);
+      healthSnapshotUsed = {
+        id: null,
+        source: clientSnapshot.source ?? 'unknown',
+        generatedAt: clientSnapshot.generatedAt ?? null,
+        uploadedAt: clientSnapshot.uploadedAt ?? null,
+        from: 'client_payload',
+      };
+    } else {
+      latestSnapshot = await HealthSnapshot.findOne({ userId: req.auth.userId })
+        .sort({ uploadedAt: -1 })
+        .exec();
+      healthContext = latestSnapshot ? buildHealthContext(latestSnapshot) : undefined;
+      healthSnapshotUsed = latestSnapshot
+        ? {
+            id: latestSnapshot.id,
+            source: latestSnapshot.source,
+            generatedAt: latestSnapshot.generatedAt.toISOString(),
+            uploadedAt: latestSnapshot.uploadedAt.toISOString(),
+            from: 'db',
+          }
+        : null;
+    }
+
     const result = await answerWithRagPersonalized({
       question: parsed.data.message,
       topK: parsed.data.topK ?? env.RAG_TOP_K,
@@ -219,14 +410,7 @@ export async function ragHealthChat(req: Request, res: Response): Promise<void> 
 
     res.status(200).json({
       ...result,
-      healthSnapshotUsed: latestSnapshot
-        ? {
-            id: latestSnapshot.id,
-            source: latestSnapshot.source,
-            generatedAt: latestSnapshot.generatedAt.toISOString(),
-            uploadedAt: latestSnapshot.uploadedAt.toISOString(),
-          }
-        : null,
+      healthSnapshotUsed,
     });
   } catch (error) {
     const maybeError = error as { status?: number; message?: string };
