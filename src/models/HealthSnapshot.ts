@@ -118,8 +118,11 @@ export interface HealthSnapshotDocument extends Document {
   userId: Types.ObjectId;
   source: 'healthkit' | 'mock';
   authorized: boolean;
+  syncReason?: 'manual' | 'auto' | 'chat';
   generatedAt: Date;
   uploadedAt: Date;
+  snapshotDigest?: string;
+  payloadBytes?: number;
   note?: string;
   activity?: HealthActivityData;
   sleep?: HealthSleepData;
@@ -213,6 +216,11 @@ const healthSnapshotSchema = new Schema<HealthSnapshotDocument>(
       type: Boolean,
       required: true,
     },
+    syncReason: {
+      type: String,
+      enum: ['manual', 'auto', 'chat'],
+      default: 'manual',
+    },
     generatedAt: {
       type: Date,
       required: true,
@@ -221,6 +229,16 @@ const healthSnapshotSchema = new Schema<HealthSnapshotDocument>(
       type: Date,
       required: true,
       default: Date.now,
+    },
+    snapshotDigest: {
+      type: String,
+      trim: true,
+      default: '',
+    },
+    payloadBytes: {
+      type: Number,
+      min: 0,
+      default: 0,
     },
     note: {
       type: String,
@@ -335,5 +353,7 @@ const healthSnapshotSchema = new Schema<HealthSnapshotDocument>(
 
 healthSnapshotSchema.index({ userId: 1, uploadedAt: -1 });
 healthSnapshotSchema.index({ userId: 1, generatedAt: -1 });
+healthSnapshotSchema.index({ userId: 1, source: 1, generatedAt: -1 });
+healthSnapshotSchema.index({ userId: 1, snapshotDigest: 1, uploadedAt: -1 });
 
 export const HealthSnapshot = model<HealthSnapshotDocument>('HealthSnapshot', healthSnapshotSchema);

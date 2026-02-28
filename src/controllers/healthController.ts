@@ -1,4 +1,5 @@
 import { Request, Response } from 'express';
+import { createHash } from 'node:crypto';
 import { ZodError, z } from 'zod';
 import { HealthSnapshot } from '../models/HealthSnapshot';
 
@@ -153,10 +154,12 @@ const healthKitAllDataSchema = z
 const healthUploadBodySchema = z
   .object({
     snapshot: healthKitAllDataSchema,
+    syncReason: z.enum(['manual', 'auto', 'chat']).optional(),
   })
   .passthrough();
 
 type HealthUploadPayload = z.infer<typeof healthKitAllDataSchema>;
+type HealthSyncReason = 'manual' | 'auto' | 'chat';
 
 type HealthRiskAlertSeverity = 'watch' | 'high';
 
@@ -178,8 +181,67 @@ type HealthRiskAlert = {
   triggeredAt: string;
 };
 
+const HEALTH_RETRY_DEDUP_WINDOW_MS = 2 * 60 * 1000;
+const HEALTH_SNAPSHOT_KEEP_MAX = 4320;
+const HEALTH_SNAPSHOT_PRUNE_COOLDOWN_MS = 30 * 60 * 1000;
+const pruneStampByUser = new Map<string, number>();
+
 function severityRank(value: HealthRiskAlertSeverity): number {
   return value === 'high' ? 2 : 1;
+}
+
+function stableStringify(value: unknown): string {
+  if (value === null || value === undefined) {
+    return String(value);
+  }
+  if (typeof value !== 'object') {
+    return JSON.stringify(value);
+  }
+  if (Array.isArray(value)) {
+    return `[${value.map(item => stableStringify(item)).join(',')}]`;
+  }
+  const entries = Object.entries(value as Record<string, unknown>)
+    .filter(([, item]) => item !== undefined)
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([key, item]) => `${JSON.stringify(key)}:${stableStringify(item)}`);
+  return `{${entries.join(',')}}`;
+}
+
+function createSnapshotDigest(snapshot: HealthUploadPayload): string {
+  return createHash('sha256').update(stableStringify(snapshot)).digest('hex');
+}
+
+function estimatePayloadBytes(snapshot: HealthUploadPayload): number {
+  try {
+    return Buffer.byteLength(JSON.stringify(snapshot), 'utf8');
+  } catch (_error) {
+    return 0;
+  }
+}
+
+async function pruneSnapshotsForUser(userId: string, nowMs: number): Promise<void> {
+  if (pruneStampByUser.size > 5000 && !pruneStampByUser.has(userId)) {
+    pruneStampByUser.clear();
+  }
+  const lastPrunedAt = pruneStampByUser.get(userId) ?? 0;
+  if (nowMs - lastPrunedAt < HEALTH_SNAPSHOT_PRUNE_COOLDOWN_MS) {
+    return;
+  }
+  pruneStampByUser.set(userId, nowMs);
+
+  const staleRows = await HealthSnapshot.find({ userId })
+    .sort({ uploadedAt: -1 })
+    .skip(HEALTH_SNAPSHOT_KEEP_MAX)
+    .select('_id')
+    .lean()
+    .exec();
+
+  if (staleRows.length === 0) {
+    return;
+  }
+
+  const staleIds = staleRows.map(row => row._id);
+  await HealthSnapshot.deleteMany({ _id: { $in: staleIds } }).exec();
 }
 
 function toMmolL(valueMgDl: number): number {
@@ -349,12 +411,18 @@ function detectHealthRiskAlerts(snapshot: HealthUploadPayload): HealthRiskAlert[
   return Array.from(alertsByCode.values()).sort((a, b) => severityRank(b.severity) - severityRank(a.severity));
 }
 
-function getSnapshotPayload(body: unknown): HealthUploadPayload {
+function getSnapshotPayload(body: unknown): { snapshot: HealthUploadPayload; syncReason: HealthSyncReason } {
   const wrappedParsed = healthUploadBodySchema.safeParse(body);
   if (wrappedParsed.success) {
-    return wrappedParsed.data.snapshot;
+    return {
+      snapshot: wrappedParsed.data.snapshot,
+      syncReason: wrappedParsed.data.syncReason ?? 'manual',
+    };
   }
-  return healthKitAllDataSchema.parse(body);
+  return {
+    snapshot: healthKitAllDataSchema.parse(body),
+    syncReason: 'manual',
+  };
 }
 
 export async function uploadHealthSnapshot(req: Request, res: Response): Promise<void> {
@@ -364,20 +432,93 @@ export async function uploadHealthSnapshot(req: Request, res: Response): Promise
   }
 
   try {
-    const snapshot = getSnapshotPayload(req.body);
+    const { snapshot, syncReason } = getSnapshotPayload(req.body);
     const generatedAtDate = new Date(snapshot.generatedAt);
+    const now = new Date();
+    const nowMs = now.getTime();
+    const userId = req.auth.userId;
 
     if (Number.isNaN(generatedAtDate.getTime())) {
       res.status(400).json({ message: 'Invalid generatedAt datetime' });
       return;
     }
 
+    const snapshotDigest = createSnapshotDigest(snapshot);
+    const payloadBytes = estimatePayloadBytes(snapshot);
+    const alerts = detectHealthRiskAlerts(snapshot);
+
+    const existingSameSample = await HealthSnapshot.findOne({
+      userId,
+      source: snapshot.source,
+      generatedAt: generatedAtDate,
+    }).exec();
+
+    if (existingSameSample) {
+      existingSameSample.set({
+        authorized: snapshot.authorized,
+        syncReason,
+        uploadedAt: now,
+        snapshotDigest,
+        payloadBytes,
+        note: snapshot.note ?? '',
+        activity: snapshot.activity,
+        sleep: snapshot.sleep,
+        heart: snapshot.heart,
+        oxygen: snapshot.oxygen,
+        metabolic: snapshot.metabolic,
+        environment: snapshot.environment,
+        body: snapshot.body,
+        workouts: snapshot.workouts ?? [],
+      });
+      await existingSameSample.save();
+
+      void pruneSnapshotsForUser(String(userId), nowMs).catch(error => {
+        console.error('[health] prune failed:', error);
+      });
+
+      res.status(200).json({
+        id: existingSameSample.id,
+        uploadedAt: existingSameSample.uploadedAt.toISOString(),
+        generatedAt: existingSameSample.generatedAt.toISOString(),
+        hasRiskAlerts: alerts.length > 0,
+        alerts,
+        deduplicated: true,
+        dedupReason: 'same_generated_at',
+      });
+      return;
+    }
+
+    const latest = await HealthSnapshot.findOne({ userId })
+      .sort({ uploadedAt: -1 })
+      .select('_id uploadedAt generatedAt snapshotDigest')
+      .lean()
+      .exec();
+
+    if (latest && latest.snapshotDigest === snapshotDigest) {
+      const latestUploadMs = new Date(latest.uploadedAt).getTime();
+      if (Number.isFinite(latestUploadMs) && nowMs - latestUploadMs < HEALTH_RETRY_DEDUP_WINDOW_MS) {
+        res.status(200).json({
+          id: String(latest._id),
+          uploadedAt: new Date(latest.uploadedAt).toISOString(),
+          generatedAt: new Date(latest.generatedAt).toISOString(),
+          hasRiskAlerts: alerts.length > 0,
+          alerts,
+          deduplicated: true,
+          dedupReason: 'retry_window',
+        });
+        return;
+      }
+    }
+
     const created = await HealthSnapshot.create({
-      userId: req.auth.userId,
+      userId,
       source: snapshot.source,
       authorized: snapshot.authorized,
+      syncReason,
       generatedAt: generatedAtDate,
-      uploadedAt: new Date(),
+      uploadedAt: now,
+      snapshotDigest,
+      payloadBytes,
       note: snapshot.note ?? '',
       activity: snapshot.activity,
       sleep: snapshot.sleep,
@@ -389,7 +530,9 @@ export async function uploadHealthSnapshot(req: Request, res: Response): Promise
       workouts: snapshot.workouts ?? [],
     });
 
-    const alerts = detectHealthRiskAlerts(snapshot);
+    void pruneSnapshotsForUser(String(userId), nowMs).catch(error => {
+      console.error('[health] prune failed:', error);
+    });
 
     res.status(201).json({
       id: created.id,
@@ -397,6 +540,7 @@ export async function uploadHealthSnapshot(req: Request, res: Response): Promise
       generatedAt: created.generatedAt.toISOString(),
       hasRiskAlerts: alerts.length > 0,
       alerts,
+      deduplicated: false,
     });
   } catch (error) {
     if (error instanceof ZodError) {
@@ -421,6 +565,7 @@ export async function getLatestHealthSnapshot(req: Request, res: Response): Prom
   try {
     const latest = await HealthSnapshot.findOne({ userId: req.auth.userId })
       .sort({ uploadedAt: -1 })
+      .lean()
       .exec();
 
     if (!latest) {
@@ -430,11 +575,14 @@ export async function getLatestHealthSnapshot(req: Request, res: Response): Prom
 
     res.status(200).json({
       snapshot: {
-        id: latest.id,
+        id: String(latest._id),
         source: latest.source,
         authorized: latest.authorized,
-        generatedAt: latest.generatedAt.toISOString(),
-        uploadedAt: latest.uploadedAt.toISOString(),
+        syncReason: latest.syncReason ?? 'manual',
+        generatedAt: new Date(latest.generatedAt).toISOString(),
+        uploadedAt: new Date(latest.uploadedAt).toISOString(),
+        snapshotDigest: latest.snapshotDigest ?? '',
+        payloadBytes: latest.payloadBytes ?? 0,
         note: latest.note ?? '',
         activity: latest.activity,
         sleep: latest.sleep,
