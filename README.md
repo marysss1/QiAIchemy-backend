@@ -191,7 +191,7 @@ npm run rag:ingest -- --dir data/knowledge
 - `POST /api/agent/ask` (No auth, minimal Graph-RAG question API)
 - `POST /api/agent/chat` (Bearer token, Agent + RAG + citations)
 - `POST /api/agent/chat/health` (Bearer token, conversation + latest HealthSnapshot + RAG + citations)
-- `POST /api/health/snapshots` (Bearer token, upload HealthKit snapshot with server timestamp)
+- `POST /api/health/snapshots` (Bearer token, upload HealthKit/Huawei Health snapshot with server timestamp)
 - `GET /health`
 
 ### Minimal ask API (recommended for quick integration)

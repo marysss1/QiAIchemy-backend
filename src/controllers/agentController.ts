@@ -20,7 +20,7 @@ const conversationTurnSchema = z.object({
 
 const clientHealthSnapshotSchema = z
   .object({
-    source: z.enum(['healthkit', 'mock']).optional(),
+    source: z.enum(['healthkit', 'huawei_health', 'huawei', 'mock']).optional(),
     authorized: z.boolean().optional(),
     generatedAt: z.string().datetime({ offset: true }).optional(),
     uploadedAt: z.string().datetime({ offset: true }).optional(),
@@ -32,6 +32,7 @@ const clientHealthSnapshotSchema = z
     metabolic: z.record(z.unknown()).optional(),
     environment: z.record(z.unknown()).optional(),
     body: z.record(z.unknown()).optional(),
+    huawei: z.record(z.unknown()).optional(),
     workouts: z.array(z.record(z.unknown())).optional(),
   })
   .passthrough();
@@ -172,6 +173,92 @@ function buildHealthContextFromClientSnapshot(snapshot: ClientHealthSnapshotPayl
     );
   }
 
+  const huawei = toRecord(snapshot.huawei);
+  if (huawei) {
+    const huaweiActivity = toRecord(huawei.activity);
+    if (huaweiActivity) {
+      lines.push(
+        `华为活动: 步数=${formatMetric(toNumber(huaweiActivity.stepsToday), '步')}, 距离=${formatMetric(
+          toNumber(huaweiActivity.distanceKmToday),
+          'km'
+        )}, 卡路里=${formatMetric(toNumber(huaweiActivity.caloriesKcalToday), 'kcal')}, 活跃分钟=${formatMetric(
+          toNumber(huaweiActivity.activeMinutesToday),
+          'min'
+        )}`
+      );
+    }
+
+    const huaweiSleep = toRecord(huawei.sleep);
+    if (huaweiSleep) {
+      lines.push(
+        `华为睡眠: 总睡眠=${formatMetric(
+          toNumber(huaweiSleep.asleepMinutesLast24h),
+          'min'
+        )}, 深睡=${formatMetric(toNumber(huaweiSleep.deepSleepMinutesLast24h), 'min')}, REM=${formatMetric(
+          toNumber(huaweiSleep.remSleepMinutesLast24h),
+          'min'
+        )}, 评分=${formatMetric(toNumber(huaweiSleep.sleepScore))}`
+      );
+    }
+
+    const huaweiHeart = toRecord(huawei.heart);
+    if (huaweiHeart) {
+      lines.push(
+        `华为心脏: 最新心率=${formatMetric(
+          toNumber(huaweiHeart.latestHeartRateBpm),
+          'bpm'
+        )}, 静息心率=${formatMetric(toNumber(huaweiHeart.restingHeartRateBpm), 'bpm')}, 最高/最低=${formatMetric(
+          toNumber(huaweiHeart.maxHeartRateBpmLast24h),
+          'bpm'
+        )}/${formatMetric(toNumber(huaweiHeart.minHeartRateBpmLast24h), 'bpm')}`
+      );
+      if (typeof huaweiHeart.heartRateWarning === 'string' && huaweiHeart.heartRateWarning.trim().length > 0) {
+        lines.push(`华为心率预警: ${huaweiHeart.heartRateWarning.trim()}`);
+      }
+    }
+
+    const huaweiOxygen = toRecord(huawei.oxygen);
+    if (huaweiOxygen) {
+      lines.push(
+        `华为血氧: 最新=${formatMetric(
+          toNumber(huaweiOxygen.latestSpO2Percent),
+          '%'
+        )}, 最低=${formatMetric(toNumber(huaweiOxygen.minSpO2PercentLast24h), '%')}`
+      );
+    }
+
+    const huaweiStress = toRecord(huawei.stress);
+    if (huaweiStress) {
+      lines.push(
+        `华为压力: 最新=${formatMetric(
+          toNumber(huaweiStress.latestStressScore)
+        )}, 平均=${formatMetric(toNumber(huaweiStress.averageStressScoreToday))}, HRV=${formatMetric(
+          toNumber(huaweiStress.hrvMs),
+          'ms'
+        )}`
+      );
+    }
+
+    const huaweiBody = toRecord(huawei.body);
+    if (huaweiBody) {
+      lines.push(
+        `华为身体成分: 体重=${formatMetric(toNumber(huaweiBody.weightKg), 'kg')}, BMI=${formatMetric(
+          toNumber(huaweiBody.bmi)
+        )}, 体脂=${formatMetric(toNumber(huaweiBody.bodyFatPercent), '%')}`
+      );
+    }
+
+    const huaweiBloodPressure = toRecord(huawei.bloodPressure);
+    if (huaweiBloodPressure) {
+      lines.push(
+        `华为血压: 收缩压/舒张压=${formatMetric(
+          toNumber(huaweiBloodPressure.latestSystolicMmhg),
+          'mmHg'
+        )}/${formatMetric(toNumber(huaweiBloodPressure.latestDiastolicMmhg), 'mmHg')}`
+      );
+    }
+  }
+
   if (Array.isArray(snapshot.workouts) && snapshot.workouts.length > 0) {
     const recent = snapshot.workouts[0];
     lines.push(
@@ -183,6 +270,20 @@ function buildHealthContextFromClientSnapshot(snapshot: ClientHealthSnapshotPayl
           : '未知'
       }, 时长=${formatMetric(toNumber(recent.durationMinutes), 'min')}, 距离=${formatMetric(
         toNumber(recent.totalDistanceKm),
+        'km'
+      )}`
+    );
+  } else if (huawei && Array.isArray(huawei.workouts) && huawei.workouts.length > 0) {
+    const recent = toRecord(huawei.workouts[0]);
+    lines.push(
+      `华为运动记录: 共${huawei.workouts.length}条, 最近一次=${
+        typeof recent?.activityTypeName === 'string'
+          ? recent.activityTypeName
+          : typeof recent?.activityTypeCode === 'number'
+          ? String(recent.activityTypeCode)
+          : '未知'
+      }, 时长=${formatMetric(toNumber(recent?.durationMinutes), 'min')}, 距离=${formatMetric(
+        toNumber(recent?.totalDistanceKm),
         'km'
       )}`
     );
@@ -290,10 +391,99 @@ function buildHealthContext(snapshot: HealthSnapshotDocument): string {
     );
   }
 
+  const huawei = snapshot.huawei;
+  if (huawei) {
+    if (huawei.activity) {
+      lines.push(
+        `华为活动: 步数=${formatMetric(huawei.activity.stepsToday, '步')}, 距离=${formatMetric(
+          huawei.activity.distanceKmToday,
+          'km'
+        )}, 卡路里=${formatMetric(huawei.activity.caloriesKcalToday, 'kcal')}, 活跃分钟=${formatMetric(
+          huawei.activity.activeMinutesToday,
+          'min'
+        )}`
+      );
+    }
+
+    if (huawei.sleep) {
+      lines.push(
+        `华为睡眠: 总睡眠=${formatMetric(
+          huawei.sleep.asleepMinutesLast24h,
+          'min'
+        )}, 深睡=${formatMetric(huawei.sleep.deepSleepMinutesLast24h, 'min')}, REM=${formatMetric(
+          huawei.sleep.remSleepMinutesLast24h,
+          'min'
+        )}, 评分=${formatMetric(huawei.sleep.sleepScore)}`
+      );
+    }
+
+    if (huawei.heart) {
+      lines.push(
+        `华为心脏: 最新心率=${formatMetric(
+          huawei.heart.latestHeartRateBpm,
+          'bpm'
+        )}, 静息心率=${formatMetric(huawei.heart.restingHeartRateBpm, 'bpm')}, 最高/最低=${formatMetric(
+          huawei.heart.maxHeartRateBpmLast24h,
+          'bpm'
+        )}/${formatMetric(huawei.heart.minHeartRateBpmLast24h, 'bpm')}`
+      );
+      if (huawei.heart.heartRateWarning) {
+        lines.push(`华为心率预警: ${huawei.heart.heartRateWarning}`);
+      }
+    }
+
+    if (huawei.oxygen) {
+      lines.push(
+        `华为血氧: 最新=${formatMetric(
+          huawei.oxygen.latestSpO2Percent,
+          '%'
+        )}, 最低=${formatMetric(huawei.oxygen.minSpO2PercentLast24h, '%')}`
+      );
+    }
+
+    if (huawei.stress) {
+      lines.push(
+        `华为压力: 最新=${formatMetric(
+          huawei.stress.latestStressScore
+        )}, 平均=${formatMetric(huawei.stress.averageStressScoreToday)}, HRV=${formatMetric(
+          huawei.stress.hrvMs,
+          'ms'
+        )}`
+      );
+    }
+
+    if (huawei.body) {
+      lines.push(
+        `华为身体成分: 体重=${formatMetric(huawei.body.weightKg, 'kg')}, BMI=${formatMetric(
+          huawei.body.bmi
+        )}, 体脂=${formatMetric(huawei.body.bodyFatPercent, '%')}`
+      );
+    }
+
+    if (huawei.bloodPressure) {
+      lines.push(
+        `华为血压: 收缩压/舒张压=${formatMetric(
+          huawei.bloodPressure.latestSystolicMmhg,
+          'mmHg'
+        )}/${formatMetric(huawei.bloodPressure.latestDiastolicMmhg, 'mmHg')}`
+      );
+    }
+  }
+
   if (Array.isArray(snapshot.workouts) && snapshot.workouts.length > 0) {
     const recent = snapshot.workouts[0];
     lines.push(
       `运动记录: 共${snapshot.workouts.length}条, 最近一次=${
+        recent.activityTypeName || recent.activityTypeCode || '未知'
+      }, 时长=${formatMetric(recent.durationMinutes, 'min')}, 距离=${formatMetric(
+        recent.totalDistanceKm,
+        'km'
+      )}`
+    );
+  } else if (Array.isArray(snapshot.huawei?.workouts) && snapshot.huawei.workouts.length > 0) {
+    const recent = snapshot.huawei.workouts[0];
+    lines.push(
+      `华为运动记录: 共${snapshot.huawei.workouts.length}条, 最近一次=${
         recent.activityTypeName || recent.activityTypeCode || '未知'
       }, 时长=${formatMetric(recent.durationMinutes, 'min')}, 距离=${formatMetric(
         recent.totalDistanceKm,

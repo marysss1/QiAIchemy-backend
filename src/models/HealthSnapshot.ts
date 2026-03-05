@@ -9,6 +9,8 @@ export type HealthSleepStage =
   | 'asleepREM'
   | 'unknown';
 
+export type HealthSnapshotSource = 'healthkit' | 'huawei_health' | 'mock';
+
 export interface HealthTrendPoint {
   timestamp: Date;
   value: number;
@@ -51,6 +53,9 @@ export interface HealthWorkoutRecord {
   durationMinutes?: number;
   totalEnergyKcal?: number;
   totalDistanceKm?: number;
+  averageHeartRateBpm?: number;
+  maxHeartRateBpm?: number;
+  sourceDevice?: string;
 }
 
 export interface HealthActivityData {
@@ -114,9 +119,103 @@ export interface HealthBodyData {
   bodyMassSeriesLast30d?: HealthTrendPoint[];
 }
 
+export type HuaweiSleepStage = 'deep' | 'light' | 'rem' | 'awake' | 'nap' | 'unknown';
+
+export interface HuaweiSleepSegment {
+  stage: HuaweiSleepStage;
+  startDate: Date;
+  endDate: Date;
+  durationMinutes?: number;
+}
+
+export interface HuaweiBloodPressurePoint {
+  timestamp: Date;
+  systolicMmhg: number;
+  diastolicMmhg: number;
+  unit?: string;
+}
+
+export interface HealthHuaweiActivityData {
+  stepsToday?: number;
+  distanceKmToday?: number;
+  caloriesKcalToday?: number;
+  floorsClimbedToday?: number;
+  activeMinutesToday?: number;
+  moderateToVigorousMinutesToday?: number;
+  standingHoursToday?: number;
+  stepsSeriesToday?: HealthTrendPoint[];
+  caloriesSeriesToday?: HealthTrendPoint[];
+  activeMinutesSeriesToday?: HealthTrendPoint[];
+}
+
+export interface HealthHuaweiSleepData {
+  asleepMinutesLast24h?: number;
+  deepSleepMinutesLast24h?: number;
+  lightSleepMinutesLast24h?: number;
+  remSleepMinutesLast24h?: number;
+  awakeMinutesLast24h?: number;
+  napMinutesLast24h?: number;
+  sleepScore?: number;
+  bedTime?: Date;
+  wakeTime?: Date;
+  sleepSegmentsLast24h?: HuaweiSleepSegment[];
+}
+
+export interface HealthHuaweiHeartData {
+  latestHeartRateBpm?: number;
+  restingHeartRateBpm?: number;
+  maxHeartRateBpmLast24h?: number;
+  minHeartRateBpmLast24h?: number;
+  heartRateWarning?: string;
+  heartRateSeriesLast24h?: HealthTrendPoint[];
+}
+
+export interface HealthHuaweiOxygenData {
+  latestSpO2Percent?: number;
+  minSpO2PercentLast24h?: number;
+  spO2SeriesLast24h?: HealthTrendPoint[];
+}
+
+export interface HealthHuaweiStressData {
+  latestStressScore?: number;
+  averageStressScoreToday?: number;
+  hrvMs?: number;
+  stressSeriesLast24h?: HealthTrendPoint[];
+}
+
+export interface HealthHuaweiBodyData {
+  weightKg?: number;
+  bmi?: number;
+  bodyFatPercent?: number;
+  skeletalMuscleKg?: number;
+  bodyWaterPercent?: number;
+  visceralFatLevel?: number;
+}
+
+export interface HealthHuaweiBloodPressureData {
+  latestSystolicMmhg?: number;
+  latestDiastolicMmhg?: number;
+  bloodPressureSeriesLast30d?: HuaweiBloodPressurePoint[];
+}
+
+export interface HealthHuaweiData {
+  deviceModel?: string;
+  appVersion?: string;
+  dataWindowStart?: Date;
+  dataWindowEnd?: Date;
+  activity?: HealthHuaweiActivityData;
+  sleep?: HealthHuaweiSleepData;
+  heart?: HealthHuaweiHeartData;
+  oxygen?: HealthHuaweiOxygenData;
+  stress?: HealthHuaweiStressData;
+  body?: HealthHuaweiBodyData;
+  bloodPressure?: HealthHuaweiBloodPressureData;
+  workouts?: HealthWorkoutRecord[];
+}
+
 export interface HealthSnapshotDocument extends Document {
   userId: Types.ObjectId;
-  source: 'healthkit' | 'mock';
+  source: HealthSnapshotSource;
   authorized: boolean;
   syncReason?: 'manual' | 'auto' | 'chat';
   generatedAt: Date;
@@ -131,6 +230,7 @@ export interface HealthSnapshotDocument extends Document {
   metabolic?: HealthMetabolicData;
   environment?: HealthEnvironmentData;
   body?: HealthBodyData;
+  huawei?: HealthHuaweiData;
   workouts: HealthWorkoutRecord[];
   createdAt: Date;
   updatedAt: Date;
@@ -145,6 +245,9 @@ const workoutSchema = new Schema<HealthWorkoutRecord>(
     durationMinutes: Number,
     totalEnergyKcal: Number,
     totalDistanceKm: Number,
+    averageHeartRateBpm: Number,
+    maxHeartRateBpm: Number,
+    sourceDevice: String,
   },
   { _id: false }
 );
@@ -199,6 +302,29 @@ const sleepApneaSchema = new Schema<HealthSleepApneaData>(
   { _id: false }
 );
 
+const huaweiSleepSegmentSchema = new Schema<HuaweiSleepSegment>(
+  {
+    stage: {
+      type: String,
+      enum: ['deep', 'light', 'rem', 'awake', 'nap', 'unknown'],
+    },
+    startDate: Date,
+    endDate: Date,
+    durationMinutes: Number,
+  },
+  { _id: false }
+);
+
+const huaweiBloodPressurePointSchema = new Schema<HuaweiBloodPressurePoint>(
+  {
+    timestamp: Date,
+    systolicMmhg: Number,
+    diastolicMmhg: Number,
+    unit: String,
+  },
+  { _id: false }
+);
+
 const healthSnapshotSchema = new Schema<HealthSnapshotDocument>(
   {
     userId: {
@@ -209,7 +335,7 @@ const healthSnapshotSchema = new Schema<HealthSnapshotDocument>(
     },
     source: {
       type: String,
-      enum: ['healthkit', 'mock'],
+      enum: ['healthkit', 'huawei_health', 'mock'],
       required: true,
     },
     authorized: {
@@ -338,6 +464,96 @@ const healthSnapshotSchema = new Schema<HealthSnapshotDocument>(
       },
       bodyMassSeriesLast30d: {
         type: [trendPointSchema],
+        default: undefined,
+      },
+    },
+    huawei: {
+      deviceModel: String,
+      appVersion: String,
+      dataWindowStart: Date,
+      dataWindowEnd: Date,
+      activity: {
+        stepsToday: Number,
+        distanceKmToday: Number,
+        caloriesKcalToday: Number,
+        floorsClimbedToday: Number,
+        activeMinutesToday: Number,
+        moderateToVigorousMinutesToday: Number,
+        standingHoursToday: Number,
+        stepsSeriesToday: {
+          type: [trendPointSchema],
+          default: undefined,
+        },
+        caloriesSeriesToday: {
+          type: [trendPointSchema],
+          default: undefined,
+        },
+        activeMinutesSeriesToday: {
+          type: [trendPointSchema],
+          default: undefined,
+        },
+      },
+      sleep: {
+        asleepMinutesLast24h: Number,
+        deepSleepMinutesLast24h: Number,
+        lightSleepMinutesLast24h: Number,
+        remSleepMinutesLast24h: Number,
+        awakeMinutesLast24h: Number,
+        napMinutesLast24h: Number,
+        sleepScore: Number,
+        bedTime: Date,
+        wakeTime: Date,
+        sleepSegmentsLast24h: {
+          type: [huaweiSleepSegmentSchema],
+          default: undefined,
+        },
+      },
+      heart: {
+        latestHeartRateBpm: Number,
+        restingHeartRateBpm: Number,
+        maxHeartRateBpmLast24h: Number,
+        minHeartRateBpmLast24h: Number,
+        heartRateWarning: String,
+        heartRateSeriesLast24h: {
+          type: [trendPointSchema],
+          default: undefined,
+        },
+      },
+      oxygen: {
+        latestSpO2Percent: Number,
+        minSpO2PercentLast24h: Number,
+        spO2SeriesLast24h: {
+          type: [trendPointSchema],
+          default: undefined,
+        },
+      },
+      stress: {
+        latestStressScore: Number,
+        averageStressScoreToday: Number,
+        hrvMs: Number,
+        stressSeriesLast24h: {
+          type: [trendPointSchema],
+          default: undefined,
+        },
+      },
+      body: {
+        weightKg: Number,
+        bmi: Number,
+        bodyFatPercent: Number,
+        skeletalMuscleKg: Number,
+        bodyWaterPercent: Number,
+        visceralFatLevel: Number,
+      },
+      bloodPressure: {
+        latestSystolicMmhg: Number,
+        latestDiastolicMmhg: Number,
+        bloodPressureSeriesLast30d: {
+          type: [huaweiBloodPressurePointSchema],
+          default: undefined,
+        },
+      },
+      workouts: {
+        type: [workoutSchema],
         default: undefined,
       },
     },

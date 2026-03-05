@@ -5,6 +5,7 @@ import { HealthSnapshot } from '../models/HealthSnapshot';
 
 const optionalNumber = z.number().finite().optional();
 const optionalDateTime = z.string().datetime({ offset: true }).optional();
+const healthSourceInputSchema = z.enum(['healthkit', 'huawei_health', 'huawei', 'mock']);
 
 const healthTrendPointSchema = z
   .object({
@@ -56,6 +57,9 @@ const healthWorkoutRecordSchema = z
     durationMinutes: optionalNumber,
     totalEnergyKcal: optionalNumber,
     totalDistanceKm: optionalNumber,
+    averageHeartRateBpm: optionalNumber,
+    maxHeartRateBpm: optionalNumber,
+    sourceDevice: z.string().trim().max(100).optional(),
   })
   .passthrough();
 
@@ -134,9 +138,121 @@ const healthBodyDataSchema = z
   })
   .passthrough();
 
-const healthKitAllDataSchema = z
+const huaweiSleepSegmentSchema = z
   .object({
-    source: z.enum(['healthkit', 'mock']),
+    stage: z.enum(['deep', 'light', 'rem', 'awake', 'nap', 'unknown']),
+    startDate: z.string().datetime({ offset: true }),
+    endDate: z.string().datetime({ offset: true }),
+    durationMinutes: optionalNumber,
+  })
+  .passthrough();
+
+const huaweiBloodPressurePointSchema = z
+  .object({
+    timestamp: z.string().datetime({ offset: true }),
+    systolicMmhg: z.number().finite(),
+    diastolicMmhg: z.number().finite(),
+    unit: z.string().trim().max(24).optional(),
+  })
+  .passthrough();
+
+const huaweiActivityDataSchema = z
+  .object({
+    stepsToday: optionalNumber,
+    distanceKmToday: optionalNumber,
+    caloriesKcalToday: optionalNumber,
+    floorsClimbedToday: optionalNumber,
+    activeMinutesToday: optionalNumber,
+    moderateToVigorousMinutesToday: optionalNumber,
+    standingHoursToday: optionalNumber,
+    stepsSeriesToday: z.array(healthTrendPointSchema).max(300).optional(),
+    caloriesSeriesToday: z.array(healthTrendPointSchema).max(300).optional(),
+    activeMinutesSeriesToday: z.array(healthTrendPointSchema).max(300).optional(),
+  })
+  .passthrough();
+
+const huaweiSleepDataSchema = z
+  .object({
+    asleepMinutesLast24h: optionalNumber,
+    deepSleepMinutesLast24h: optionalNumber,
+    lightSleepMinutesLast24h: optionalNumber,
+    remSleepMinutesLast24h: optionalNumber,
+    awakeMinutesLast24h: optionalNumber,
+    napMinutesLast24h: optionalNumber,
+    sleepScore: optionalNumber,
+    bedTime: optionalDateTime,
+    wakeTime: optionalDateTime,
+    sleepSegmentsLast24h: z.array(huaweiSleepSegmentSchema).max(1000).optional(),
+  })
+  .passthrough();
+
+const huaweiHeartDataSchema = z
+  .object({
+    latestHeartRateBpm: optionalNumber,
+    restingHeartRateBpm: optionalNumber,
+    maxHeartRateBpmLast24h: optionalNumber,
+    minHeartRateBpmLast24h: optionalNumber,
+    heartRateWarning: z.string().trim().max(100).optional(),
+    heartRateSeriesLast24h: z.array(healthTrendPointSchema).max(500).optional(),
+  })
+  .passthrough();
+
+const huaweiOxygenDataSchema = z
+  .object({
+    latestSpO2Percent: optionalNumber,
+    minSpO2PercentLast24h: optionalNumber,
+    spO2SeriesLast24h: z.array(healthTrendPointSchema).max(500).optional(),
+  })
+  .passthrough();
+
+const huaweiStressDataSchema = z
+  .object({
+    latestStressScore: optionalNumber,
+    averageStressScoreToday: optionalNumber,
+    hrvMs: optionalNumber,
+    stressSeriesLast24h: z.array(healthTrendPointSchema).max(500).optional(),
+  })
+  .passthrough();
+
+const huaweiBodyDataSchema = z
+  .object({
+    weightKg: optionalNumber,
+    bmi: optionalNumber,
+    bodyFatPercent: optionalNumber,
+    skeletalMuscleKg: optionalNumber,
+    bodyWaterPercent: optionalNumber,
+    visceralFatLevel: optionalNumber,
+  })
+  .passthrough();
+
+const huaweiBloodPressureDataSchema = z
+  .object({
+    latestSystolicMmhg: optionalNumber,
+    latestDiastolicMmhg: optionalNumber,
+    bloodPressureSeriesLast30d: z.array(huaweiBloodPressurePointSchema).max(1500).optional(),
+  })
+  .passthrough();
+
+const huaweiAllDataSchema = z
+  .object({
+    deviceModel: z.string().trim().max(100).optional(),
+    appVersion: z.string().trim().max(50).optional(),
+    dataWindowStart: optionalDateTime,
+    dataWindowEnd: optionalDateTime,
+    activity: huaweiActivityDataSchema.optional(),
+    sleep: huaweiSleepDataSchema.optional(),
+    heart: huaweiHeartDataSchema.optional(),
+    oxygen: huaweiOxygenDataSchema.optional(),
+    stress: huaweiStressDataSchema.optional(),
+    body: huaweiBodyDataSchema.optional(),
+    bloodPressure: huaweiBloodPressureDataSchema.optional(),
+    workouts: z.array(healthWorkoutRecordSchema).max(500).optional(),
+  })
+  .passthrough();
+
+const healthSnapshotDataSchema = z
+  .object({
+    source: healthSourceInputSchema,
     authorized: z.boolean(),
     generatedAt: z.string().datetime({ offset: true }),
     note: z.string().max(1000).optional(),
@@ -147,18 +263,48 @@ const healthKitAllDataSchema = z
     metabolic: healthMetabolicDataSchema.optional(),
     environment: healthEnvironmentDataSchema.optional(),
     body: healthBodyDataSchema.optional(),
+    huawei: huaweiAllDataSchema.optional(),
     workouts: z.array(healthWorkoutRecordSchema).optional(),
   })
   .passthrough();
 
 const healthUploadBodySchema = z
   .object({
-    snapshot: healthKitAllDataSchema,
+    snapshot: healthSnapshotDataSchema,
     syncReason: z.enum(['manual', 'auto', 'chat']).optional(),
   })
   .passthrough();
 
-type HealthUploadPayload = z.infer<typeof healthKitAllDataSchema>;
+type HealthUploadPayload = {
+  source: 'healthkit' | 'huawei_health' | 'mock';
+  authorized: boolean;
+  generatedAt: string;
+  note?: string;
+  activity?: z.infer<typeof healthActivityDataSchema>;
+  sleep?: z.infer<typeof healthSleepDataSchema>;
+  heart?: z.infer<typeof healthHeartDataSchema>;
+  oxygen?: z.infer<typeof healthOxygenDataSchema>;
+  metabolic?: z.infer<typeof healthMetabolicDataSchema>;
+  environment?: z.infer<typeof healthEnvironmentDataSchema>;
+  body?: z.infer<typeof healthBodyDataSchema>;
+  huawei?: z.infer<typeof huaweiAllDataSchema>;
+  workouts?: Array<z.infer<typeof healthWorkoutRecordSchema>>;
+};
+type HealthUploadPayloadRaw = {
+  source: 'healthkit' | 'huawei_health' | 'huawei' | 'mock';
+  authorized: boolean;
+  generatedAt: string;
+  note?: string;
+  activity?: z.infer<typeof healthActivityDataSchema>;
+  sleep?: z.infer<typeof healthSleepDataSchema>;
+  heart?: z.infer<typeof healthHeartDataSchema>;
+  oxygen?: z.infer<typeof healthOxygenDataSchema>;
+  metabolic?: z.infer<typeof healthMetabolicDataSchema>;
+  environment?: z.infer<typeof healthEnvironmentDataSchema>;
+  body?: z.infer<typeof healthBodyDataSchema>;
+  huawei?: z.infer<typeof huaweiAllDataSchema>;
+  workouts?: Array<z.infer<typeof healthWorkoutRecordSchema>>;
+};
 type HealthSyncReason = 'manual' | 'auto' | 'chat';
 
 type HealthRiskAlertSeverity = 'watch' | 'high';
@@ -248,6 +394,13 @@ function toMmolL(valueMgDl: number): number {
   return Math.round((valueMgDl / 18) * 10) / 10;
 }
 
+function normalizeHealthSource(source: HealthUploadPayloadRaw['source']): HealthUploadPayload['source'] {
+  if (source === 'huawei') {
+    return 'huawei_health';
+  }
+  return source;
+}
+
 function detectHealthRiskAlerts(snapshot: HealthUploadPayload): HealthRiskAlert[] {
   const alertsByCode = new Map<HealthRiskAlertCode, HealthRiskAlert>();
   const triggeredAt = snapshot.generatedAt;
@@ -259,7 +412,7 @@ function detectHealthRiskAlerts(snapshot: HealthUploadPayload): HealthRiskAlert[
     }
   };
 
-  const latestHeartRate = snapshot.heart?.latestHeartRateBpm;
+  const latestHeartRate = snapshot.heart?.latestHeartRateBpm ?? snapshot.huawei?.heart?.latestHeartRateBpm;
   if (typeof latestHeartRate === 'number') {
     if (latestHeartRate >= 130) {
       putAlert({
@@ -297,7 +450,7 @@ function detectHealthRiskAlerts(snapshot: HealthUploadPayload): HealthRiskAlert[
     }
   }
 
-  const restingHeartRate = snapshot.heart?.restingHeartRateBpm;
+  const restingHeartRate = snapshot.heart?.restingHeartRateBpm ?? snapshot.huawei?.heart?.restingHeartRateBpm;
   if (typeof restingHeartRate === 'number' && restingHeartRate >= 100) {
     putAlert({
       code: 'heart_rate_warning',
@@ -311,7 +464,7 @@ function detectHealthRiskAlerts(snapshot: HealthUploadPayload): HealthRiskAlert[
     });
   }
 
-  const heartRecord = snapshot.heart as Record<string, unknown> | undefined;
+  const heartRecord = (snapshot.heart ?? snapshot.huawei?.heart) as Record<string, unknown> | undefined;
   const heartRateWarningRaw = typeof heartRecord?.heartRateWarning === 'string'
     ? heartRecord.heartRateWarning.trim().toLowerCase()
     : '';
@@ -344,7 +497,7 @@ function detectHealthRiskAlerts(snapshot: HealthUploadPayload): HealthRiskAlert[
     }
   }
 
-  const sleepScore = snapshot.sleep?.sleepScore;
+  const sleepScore = snapshot.sleep?.sleepScore ?? snapshot.huawei?.sleep?.sleepScore;
   if (typeof sleepScore === 'number') {
     if (sleepScore <= 35) {
       putAlert({
@@ -371,7 +524,7 @@ function detectHealthRiskAlerts(snapshot: HealthUploadPayload): HealthRiskAlert[
     }
   }
 
-  const bloodOxygen = snapshot.oxygen?.bloodOxygenPercent;
+  const bloodOxygen = snapshot.oxygen?.bloodOxygenPercent ?? snapshot.huawei?.oxygen?.latestSpO2Percent;
   if (typeof bloodOxygen === 'number' && bloodOxygen < 90) {
     putAlert({
       code: 'blood_oxygen_low',
@@ -412,15 +565,20 @@ function detectHealthRiskAlerts(snapshot: HealthUploadPayload): HealthRiskAlert[
 }
 
 function getSnapshotPayload(body: unknown): { snapshot: HealthUploadPayload; syncReason: HealthSyncReason } {
+  const normalizeSnapshot = (raw: HealthUploadPayloadRaw): HealthUploadPayload => ({
+    ...raw,
+    source: normalizeHealthSource(raw.source),
+  });
+
   const wrappedParsed = healthUploadBodySchema.safeParse(body);
   if (wrappedParsed.success) {
     return {
-      snapshot: wrappedParsed.data.snapshot,
+      snapshot: normalizeSnapshot(wrappedParsed.data.snapshot),
       syncReason: wrappedParsed.data.syncReason ?? 'manual',
     };
   }
   return {
-    snapshot: healthKitAllDataSchema.parse(body),
+    snapshot: normalizeSnapshot(healthSnapshotDataSchema.parse(body)),
     syncReason: 'manual',
   };
 }
@@ -468,6 +626,7 @@ export async function uploadHealthSnapshot(req: Request, res: Response): Promise
         metabolic: snapshot.metabolic,
         environment: snapshot.environment,
         body: snapshot.body,
+        huawei: snapshot.huawei,
         workouts: snapshot.workouts ?? [],
       });
       await existingSameSample.save();
@@ -527,6 +686,7 @@ export async function uploadHealthSnapshot(req: Request, res: Response): Promise
       metabolic: snapshot.metabolic,
       environment: snapshot.environment,
       body: snapshot.body,
+      huawei: snapshot.huawei,
       workouts: snapshot.workouts ?? [],
     });
 
@@ -591,6 +751,7 @@ export async function getLatestHealthSnapshot(req: Request, res: Response): Prom
         metabolic: latest.metabolic,
         environment: latest.environment,
         body: latest.body,
+        huawei: latest.huawei,
         workouts: latest.workouts ?? [],
       },
     });
