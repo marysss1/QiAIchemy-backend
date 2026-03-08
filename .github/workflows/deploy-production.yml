@@ -15,18 +15,53 @@ concurrency:
 
 jobs:
   deploy:
-    runs-on:
-      - self-hosted
-      - linux
-      - qiaichemy-backend
+    runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
+      DEPLOY_HOST: 43.138.212.17
+      DEPLOY_USER: ubuntu
       DEPLOY_PATH: /srv/qiaichemy-backend
       SERVICE_NAME: qiaichemy-backend
-      SYSTEMD_SCOPE: system
+      NODE_VERSION: "22.13.0"
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Deploy backend
-        run: bash ./scripts/deploy-production.sh
+      - name: Install rsync
+        run: sudo apt-get update && sudo apt-get install -y rsync
+
+      - name: Configure SSH
+        shell: bash
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "${{ secrets.DEPLOY_SSH_PRIVATE_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -H "${DEPLOY_HOST}" >> ~/.ssh/known_hosts
+
+      - name: Ensure deploy path exists
+        shell: bash
+        run: |
+          ssh "${DEPLOY_USER}@${DEPLOY_HOST}" "mkdir -p '${DEPLOY_PATH}'"
+
+      - name: Sync repository to server
+        shell: bash
+        run: |
+          rsync -az --delete \
+            --exclude ".git/" \
+            --exclude ".github/" \
+            --exclude ".env" \
+            --exclude "analysis/" \
+            --exclude "data/graph/" \
+            --exclude "data/knowledge/" \
+            --exclude "node_modules/" \
+            --exclude "dist/" \
+            --exclude "logs/" \
+            --exclude "reports/" \
+            ./ "${DEPLOY_USER}@${DEPLOY_HOST}:${DEPLOY_PATH}/"
+
+      - name: Restart backend on server
+        shell: bash
+        run: |
+          ssh "${DEPLOY_USER}@${DEPLOY_HOST}" \
+            "APP_PATH='${DEPLOY_PATH}' SERVICE_NAME='${SERVICE_NAME}' NODE_VERSION='${NODE_VERSION}' bash '${DEPLOY_PATH}/scripts/deploy-production.sh'"

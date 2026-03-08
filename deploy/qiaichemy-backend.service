@@ -6,10 +6,11 @@ After=network.target
 Type=simple
 User=ubuntu
 WorkingDirectory=/srv/qiaichemy-backend
-Environment=NODE_ENV=production
-Environment=PATH=/usr/local/bin:/usr/bin:/bin
+Environment=HOME=/home/ubuntu
 EnvironmentFile=/srv/qiaichemy-backend/.env
-ExecStart=/usr/bin/env node dist/server.js
+Environment=NODE_ENV=production
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+ExecStart=/bin/bash -lc '. /home/ubuntu/.nvm/nvm.sh && nvm use 22.13.0 >/dev/null && exec node dist/server.js'
 Restart=always
 RestartSec=5
 KillSignal=SIGTERM
