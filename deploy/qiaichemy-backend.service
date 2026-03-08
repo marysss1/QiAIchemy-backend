@@ -1,0 +1,19 @@
+[Unit]
+Description=QiAIchemy Backend API
+After=network.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/srv/qiaichemy-backend
+Environment=NODE_ENV=production
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+EnvironmentFile=/srv/qiaichemy-backend/.env
+ExecStart=/usr/bin/env node dist/server.js
+Restart=always
+RestartSec=5
+KillSignal=SIGTERM
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target

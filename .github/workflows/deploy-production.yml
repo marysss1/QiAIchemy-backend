@@ -1,0 +1,32 @@
+name: Deploy Production
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: qiaichemy-backend-production
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on:
+      - self-hosted
+      - linux
+      - qiaichemy-backend
+    timeout-minutes: 20
+    env:
+      DEPLOY_PATH: /srv/qiaichemy-backend
+      SERVICE_NAME: qiaichemy-backend
+      SYSTEMD_SCOPE: system
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Deploy backend
+        run: bash ./scripts/deploy-production.sh
