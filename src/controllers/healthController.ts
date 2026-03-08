@@ -2,6 +2,14 @@ import { Request, Response } from 'express';
 import { createHash } from 'node:crypto';
 import { ZodError, z } from 'zod';
 import { HealthSnapshot } from '../models/HealthSnapshot';
+import { User } from '../models/User';
+import { UserHealthProfile } from '../models/UserHealthProfile';
+import {
+  detectHealthRiskAlerts,
+  mergeTrackedHealthSignals,
+  type HealthRiskAlert,
+} from '../services/health/healthRisk';
+import { summarizeHealthProfileOverview } from '../services/agent/healthProfileOverviewSummarizer';
 
 const optionalNumber = z.number().finite().optional();
 const optionalDateTime = z.string().datetime({ offset: true }).optional();
@@ -68,10 +76,13 @@ const healthActivityDataSchema = z
     stepsToday: optionalNumber,
     distanceWalkingRunningKmToday: optionalNumber,
     activeEnergyKcalToday: optionalNumber,
+    activeEnergyGoalKcal: optionalNumber,
     basalEnergyKcalToday: optionalNumber,
     flightsClimbedToday: optionalNumber,
     exerciseMinutesToday: optionalNumber,
+    exerciseGoalMinutes: optionalNumber,
     standHoursToday: optionalNumber,
+    standGoalHours: optionalNumber,
     stepsHourlySeriesToday: z.array(healthTrendPointSchema).max(300).optional(),
     activeEnergyHourlySeriesToday: z.array(healthTrendPointSchema).max(300).optional(),
     exerciseMinutesHourlySeriesToday: z.array(healthTrendPointSchema).max(300).optional(),
@@ -307,34 +318,10 @@ type HealthUploadPayloadRaw = {
 };
 type HealthSyncReason = 'manual' | 'auto' | 'chat';
 
-type HealthRiskAlertSeverity = 'watch' | 'high';
-
-type HealthRiskAlertCode =
-  | 'heart_rate_warning'
-  | 'blood_glucose_high'
-  | 'sleep_score_low'
-  | 'blood_oxygen_low'
-  | 'sleep_apnea_detected';
-
-type HealthRiskAlert = {
-  code: HealthRiskAlertCode;
-  severity: HealthRiskAlertSeverity;
-  title: string;
-  message: string;
-  recommendation: string;
-  value?: number;
-  unit?: string;
-  triggeredAt: string;
-};
-
 const HEALTH_RETRY_DEDUP_WINDOW_MS = 2 * 60 * 1000;
 const HEALTH_SNAPSHOT_KEEP_MAX = 4320;
 const HEALTH_SNAPSHOT_PRUNE_COOLDOWN_MS = 30 * 60 * 1000;
 const pruneStampByUser = new Map<string, number>();
-
-function severityRank(value: HealthRiskAlertSeverity): number {
-  return value === 'high' ? 2 : 1;
-}
 
 function stableStringify(value: unknown): string {
   if (value === null || value === undefined) {
@@ -390,10 +377,6 @@ async function pruneSnapshotsForUser(userId: string, nowMs: number): Promise<voi
   await HealthSnapshot.deleteMany({ _id: { $in: staleIds } }).exec();
 }
 
-function toMmolL(valueMgDl: number): number {
-  return Math.round((valueMgDl / 18) * 10) / 10;
-}
-
 function normalizeHealthSource(source: HealthUploadPayloadRaw['source']): HealthUploadPayload['source'] {
   if (source === 'huawei') {
     return 'huawei_health';
@@ -401,167 +384,73 @@ function normalizeHealthSource(source: HealthUploadPayloadRaw['source']): Health
   return source;
 }
 
-function detectHealthRiskAlerts(snapshot: HealthUploadPayload): HealthRiskAlert[] {
-  const alertsByCode = new Map<HealthRiskAlertCode, HealthRiskAlert>();
-  const triggeredAt = snapshot.generatedAt;
+async function syncUserHealthProfile(args: {
+  userId: string;
+  snapshotId: string;
+  source: string;
+  generatedAt: Date;
+  alerts: HealthRiskAlert[];
+}): Promise<void> {
+  const [existing, user] = await Promise.all([
+    UserHealthProfile.findOne({ userId: args.userId }).exec(),
+    User.findById(args.userId).exec(),
+  ]);
+  const latestSignals = args.alerts.map(alert => {
+    const alertDate = new Date(alert.triggeredAt);
+    const detectedAt = Number.isNaN(alertDate.getTime()) ? args.generatedAt : alertDate;
+    return {
+      code: alert.code,
+      title: alert.title,
+      severity: alert.severity,
+      firstDetectedAt: detectedAt,
+      lastDetectedAt: detectedAt,
+      occurrenceCount: 1,
+      latestValue: alert.value,
+      unit: alert.unit ?? '',
+      latestMessage: alert.message,
+      latestRecommendation: alert.recommendation,
+    };
+  });
+  const trackedSignals = mergeTrackedHealthSignals(existing?.trackedSignals ?? [], args.alerts, args.generatedAt);
+  const llmHealthOverview = await summarizeHealthProfileOverview({
+    age: user?.age,
+    gender: user?.gender,
+    heightCm: user?.heightCm,
+    weightKg: user?.weightKg,
+    latestSignals: latestSignals.map(signal => ({
+      title: signal.title,
+      severity: signal.severity,
+      occurrenceCount: signal.occurrenceCount,
+      latestMessage: signal.latestMessage,
+    })),
+    trackedSignals: trackedSignals.map(signal => ({
+      title: signal.title,
+      severity: signal.severity,
+      occurrenceCount: signal.occurrenceCount,
+      latestMessage: signal.latestMessage,
+    })),
+  });
 
-  const putAlert = (alert: HealthRiskAlert) => {
-    const existing = alertsByCode.get(alert.code);
-    if (!existing || severityRank(alert.severity) > severityRank(existing.severity)) {
-      alertsByCode.set(alert.code, alert);
+  await UserHealthProfile.findOneAndUpdate(
+    { userId: args.userId },
+    {
+      $set: {
+        lastSnapshotId: args.snapshotId,
+        lastSnapshotGeneratedAt: args.generatedAt,
+        lastSnapshotSource: args.source,
+        llmHealthOverview,
+        latestSignals,
+        trackedSignals,
+      },
+      $setOnInsert: {
+        userId: args.userId,
+      },
+    },
+    {
+      upsert: true,
+      new: true,
     }
-  };
-
-  const latestHeartRate = snapshot.heart?.latestHeartRateBpm ?? snapshot.huawei?.heart?.latestHeartRateBpm;
-  if (typeof latestHeartRate === 'number') {
-    if (latestHeartRate >= 130) {
-      putAlert({
-        code: 'heart_rate_warning',
-        severity: 'high',
-        title: '心率预警',
-        message: `当前心率约 ${Math.round(latestHeartRate)} bpm，已明显偏高。`,
-        recommendation: '请先停止活动并休息；若伴随胸闷、胸痛或头晕，请尽快就医。',
-        value: latestHeartRate,
-        unit: 'bpm',
-        triggeredAt,
-      });
-    } else if (latestHeartRate <= 45) {
-      putAlert({
-        code: 'heart_rate_warning',
-        severity: 'high',
-        title: '心率预警',
-        message: `当前心率约 ${Math.round(latestHeartRate)} bpm，偏低。`,
-        recommendation: '请先静坐复测；若持续偏低或有不适，请及时就医。',
-        value: latestHeartRate,
-        unit: 'bpm',
-        triggeredAt,
-      });
-    } else if (latestHeartRate >= 115) {
-      putAlert({
-        code: 'heart_rate_warning',
-        severity: 'watch',
-        title: '心率偏高提醒',
-        message: `当前心率约 ${Math.round(latestHeartRate)} bpm，建议关注近期压力与睡眠。`,
-        recommendation: '建议减少刺激性饮品，进行放松呼吸，连续观察 24 小时趋势。',
-        value: latestHeartRate,
-        unit: 'bpm',
-        triggeredAt,
-      });
-    }
-  }
-
-  const restingHeartRate = snapshot.heart?.restingHeartRateBpm ?? snapshot.huawei?.heart?.restingHeartRateBpm;
-  if (typeof restingHeartRate === 'number' && restingHeartRate >= 100) {
-    putAlert({
-      code: 'heart_rate_warning',
-      severity: 'watch',
-      title: '静息心率偏高提醒',
-      message: `静息心率约 ${Math.round(restingHeartRate)} bpm，提示恢复状态可能不足。`,
-      recommendation: '建议优先保证睡眠并降低应激负荷，若持续升高请线下评估。',
-      value: restingHeartRate,
-      unit: 'bpm',
-      triggeredAt,
-    });
-  }
-
-  const heartRecord = (snapshot.heart ?? snapshot.huawei?.heart) as Record<string, unknown> | undefined;
-  const heartRateWarningRaw = typeof heartRecord?.heartRateWarning === 'string'
-    ? heartRecord.heartRateWarning.trim().toLowerCase()
-    : '';
-  if (heartRateWarningRaw && heartRateWarningRaw !== 'normal' && heartRateWarningRaw !== 'none') {
-    const severe = ['high', 'critical', 'danger'].includes(heartRateWarningRaw);
-    putAlert({
-      code: 'heart_rate_warning',
-      severity: severe ? 'high' : 'watch',
-      title: '心率系统预警',
-      message: `检测到系统心率预警标记：${heartRateWarningRaw}。`,
-      recommendation: '请结合当前症状进行复测，若出现不适请优先就医。',
-      triggeredAt,
-    });
-  }
-
-  const glucoseMgDl = snapshot.metabolic?.bloodGlucoseMgDl;
-  if (typeof glucoseMgDl === 'number') {
-    const glucoseMmolL = toMmolL(glucoseMgDl);
-    if (glucoseMmolL >= 11.1) {
-      putAlert({
-        code: 'blood_glucose_high',
-        severity: 'high',
-        title: '血糖过高预警',
-        message: `当前血糖约 ${glucoseMmolL} mmol/L（>=11.1）。`,
-        recommendation: '请尽快复测并减少高糖摄入；若持续偏高请及时就医。',
-        value: glucoseMmolL,
-        unit: 'mmol/L',
-        triggeredAt,
-      });
-    }
-  }
-
-  const sleepScore = snapshot.sleep?.sleepScore ?? snapshot.huawei?.sleep?.sleepScore;
-  if (typeof sleepScore === 'number') {
-    if (sleepScore <= 35) {
-      putAlert({
-        code: 'sleep_score_low',
-        severity: 'high',
-        title: '睡眠分数极低预警',
-        message: `本次睡眠分数约 ${Math.round(sleepScore)}，恢复质量较差。`,
-        recommendation: '建议今天降低训练/工作负荷，优先补充睡眠并关注情绪状态。',
-        value: sleepScore,
-        unit: 'score',
-        triggeredAt,
-      });
-    } else if (sleepScore <= 45) {
-      putAlert({
-        code: 'sleep_score_low',
-        severity: 'watch',
-        title: '睡眠分数偏低提醒',
-        message: `本次睡眠分数约 ${Math.round(sleepScore)}，建议调整作息。`,
-        recommendation: '建议减少晚间刺激、提前入睡，并持续观察 3 天趋势。',
-        value: sleepScore,
-        unit: 'score',
-        triggeredAt,
-      });
-    }
-  }
-
-  const bloodOxygen = snapshot.oxygen?.bloodOxygenPercent ?? snapshot.huawei?.oxygen?.latestSpO2Percent;
-  if (typeof bloodOxygen === 'number' && bloodOxygen < 90) {
-    putAlert({
-      code: 'blood_oxygen_low',
-      severity: 'high',
-      title: '血氧过低预警',
-      message: `当前血氧约 ${Math.round(bloodOxygen)}%，低于 90%。`,
-      recommendation: '请立即复测；若持续偏低或伴随呼吸不适，请尽快就医。',
-      value: bloodOxygen,
-      unit: '%',
-      triggeredAt,
-    });
-  }
-
-  const apneaEventCount = snapshot.sleep?.apnea?.eventCountLast30d;
-  const apneaRiskLevel = snapshot.sleep?.apnea?.riskLevel;
-  if (
-    (typeof apneaEventCount === 'number' && apneaEventCount > 0) ||
-    apneaRiskLevel === 'watch' ||
-    apneaRiskLevel === 'high'
-  ) {
-    const severe = apneaRiskLevel === 'high' || (typeof apneaEventCount === 'number' && apneaEventCount >= 3);
-    putAlert({
-      code: 'sleep_apnea_detected',
-      severity: severe ? 'high' : 'watch',
-      title: '睡眠呼吸暂停提醒',
-      message:
-        typeof apneaEventCount === 'number'
-          ? `近30天检测到约 ${Math.round(apneaEventCount)} 次睡眠呼吸暂停事件。`
-          : '检测到睡眠呼吸暂停风险信号。',
-      recommendation: '建议尽快进行睡眠专项评估，避免长期忽视造成白天功能受损。',
-      value: apneaEventCount,
-      unit: 'events/30d',
-      triggeredAt,
-    });
-  }
-
-  return Array.from(alertsByCode.values()).sort((a, b) => severityRank(b.severity) - severityRank(a.severity));
+  ).exec();
 }
 
 function getSnapshotPayload(body: unknown): { snapshot: HealthUploadPayload; syncReason: HealthSyncReason } {
@@ -618,6 +507,7 @@ export async function uploadHealthSnapshot(req: Request, res: Response): Promise
         uploadedAt: now,
         snapshotDigest,
         payloadBytes,
+        alerts,
         note: snapshot.note ?? '',
         activity: snapshot.activity,
         sleep: snapshot.sleep,
@@ -630,6 +520,13 @@ export async function uploadHealthSnapshot(req: Request, res: Response): Promise
         workouts: snapshot.workouts ?? [],
       });
       await existingSameSample.save();
+      await syncUserHealthProfile({
+        userId,
+        snapshotId: existingSameSample.id,
+        source: snapshot.source,
+        generatedAt: generatedAtDate,
+        alerts,
+      });
 
       void pruneSnapshotsForUser(String(userId), nowMs).catch(error => {
         console.error('[health] prune failed:', error);
@@ -656,6 +553,13 @@ export async function uploadHealthSnapshot(req: Request, res: Response): Promise
     if (latest && latest.snapshotDigest === snapshotDigest) {
       const latestUploadMs = new Date(latest.uploadedAt).getTime();
       if (Number.isFinite(latestUploadMs) && nowMs - latestUploadMs < HEALTH_RETRY_DEDUP_WINDOW_MS) {
+        await syncUserHealthProfile({
+          userId,
+          snapshotId: String(latest._id),
+          source: snapshot.source,
+          generatedAt: generatedAtDate,
+          alerts,
+        });
         res.status(200).json({
           id: String(latest._id),
           uploadedAt: new Date(latest.uploadedAt).toISOString(),
@@ -678,6 +582,7 @@ export async function uploadHealthSnapshot(req: Request, res: Response): Promise
       uploadedAt: now,
       snapshotDigest,
       payloadBytes,
+      alerts,
       note: snapshot.note ?? '',
       activity: snapshot.activity,
       sleep: snapshot.sleep,
@@ -688,6 +593,13 @@ export async function uploadHealthSnapshot(req: Request, res: Response): Promise
       body: snapshot.body,
       huawei: snapshot.huawei,
       workouts: snapshot.workouts ?? [],
+    });
+    await syncUserHealthProfile({
+      userId,
+      snapshotId: created.id,
+      source: snapshot.source,
+      generatedAt: generatedAtDate,
+      alerts,
     });
 
     void pruneSnapshotsForUser(String(userId), nowMs).catch(error => {
@@ -743,6 +655,7 @@ export async function getLatestHealthSnapshot(req: Request, res: Response): Prom
         uploadedAt: new Date(latest.uploadedAt).toISOString(),
         snapshotDigest: latest.snapshotDigest ?? '',
         payloadBytes: latest.payloadBytes ?? 0,
+        alerts: latest.alerts ?? [],
         note: latest.note ?? '',
         activity: latest.activity,
         sleep: latest.sleep,
@@ -758,5 +671,66 @@ export async function getLatestHealthSnapshot(req: Request, res: Response): Prom
   } catch (error) {
     console.error('[health] get latest failed:', error);
     res.status(500).json({ message: 'Failed to load latest health snapshot' });
+  }
+}
+
+export async function getHealthProfile(req: Request, res: Response): Promise<void> {
+  if (!req.auth?.userId) {
+    res.status(401).json({ message: 'Unauthorized' });
+    return;
+  }
+
+  try {
+    const profile = await UserHealthProfile.findOne({ userId: req.auth.userId }).lean().exec();
+
+    if (!profile) {
+      res.status(200).json({
+        profile: {
+          latestSignals: [],
+          trackedSignals: [],
+          lastSnapshotGeneratedAt: null,
+          lastSnapshotSource: '',
+          llmHealthOverview: '',
+        },
+      });
+      return;
+    }
+
+    res.status(200).json({
+      profile: {
+        latestSignals: (profile.latestSignals ?? []).map(signal => ({
+          code: signal.code,
+          title: signal.title,
+          severity: signal.severity,
+          firstDetectedAt: signal.firstDetectedAt.toISOString(),
+          lastDetectedAt: signal.lastDetectedAt.toISOString(),
+          occurrenceCount: signal.occurrenceCount,
+          latestValue: signal.latestValue,
+          unit: signal.unit ?? '',
+          latestMessage: signal.latestMessage,
+          latestRecommendation: signal.latestRecommendation,
+        })),
+        trackedSignals: (profile.trackedSignals ?? []).map(signal => ({
+          code: signal.code,
+          title: signal.title,
+          severity: signal.severity,
+          firstDetectedAt: signal.firstDetectedAt.toISOString(),
+          lastDetectedAt: signal.lastDetectedAt.toISOString(),
+          occurrenceCount: signal.occurrenceCount,
+          latestValue: signal.latestValue,
+          unit: signal.unit ?? '',
+          latestMessage: signal.latestMessage,
+          latestRecommendation: signal.latestRecommendation,
+        })),
+        lastSnapshotGeneratedAt: profile.lastSnapshotGeneratedAt
+          ? profile.lastSnapshotGeneratedAt.toISOString()
+          : null,
+        lastSnapshotSource: profile.lastSnapshotSource ?? '',
+        llmHealthOverview: profile.llmHealthOverview ?? '',
+      },
+    });
+  } catch (error) {
+    console.error('[health] get profile failed:', error);
+    res.status(500).json({ message: 'Failed to load health profile' });
   }
 }

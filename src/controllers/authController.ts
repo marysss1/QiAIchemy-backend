@@ -3,7 +3,7 @@ import { Request, Response } from 'express';
 import jwt from 'jsonwebtoken';
 import { z } from 'zod';
 import { env, requireJwtSecret } from '../config/env';
-import { User, UserDocument } from '../models/User';
+import { USER_GENDERS, User, UserDocument } from '../models/User';
 
 const usernameSchema = z
   .string()
@@ -16,6 +16,11 @@ const registerSchema = z.object({
   name: z.string().trim().min(1).max(50).optional(),
   email: z.string().email(),
   password: z.string().min(8).max(64),
+  age: z.coerce.number().int().min(1).max(120),
+  gender: z.enum(USER_GENDERS),
+  heightCm: z.coerce.number().min(50).max(250),
+  weightKg: z.coerce.number().min(20).max(300),
+  experimentConsent: z.boolean(),
 });
 
 const loginSchema = z
@@ -48,6 +53,11 @@ function toSafeUser(user: UserDocument): Record<string, unknown> {
     username: user.username,
     name: user.name,
     email: user.email,
+    age: user.age,
+    gender: user.gender,
+    heightCm: user.heightCm,
+    weightKg: user.weightKg,
+    experimentConsent: user.experimentConsent,
     createdAt: user.createdAt,
     updatedAt: user.updatedAt,
   };
@@ -81,11 +91,21 @@ export async function register(req: Request, res: Response): Promise<void> {
     return;
   }
 
+  if (!parsed.data.experimentConsent) {
+    res.status(400).json({ message: 'Experiment consent is required' });
+    return;
+  }
+
   const passwordHash = await bcrypt.hash(parsed.data.password, 12);
   const user = await User.create({
     username,
     name: parsed.data.name ?? '',
     email,
+    age: parsed.data.age,
+    gender: parsed.data.gender,
+    heightCm: parsed.data.heightCm,
+    weightKg: parsed.data.weightKg,
+    experimentConsent: parsed.data.experimentConsent,
     passwordHash,
   });
 

@@ -1,4 +1,9 @@
 import { Document, Schema, Types, model } from 'mongoose';
+import {
+  HEALTH_RISK_ALERT_CODES,
+  HEALTH_RISK_ALERT_SEVERITIES,
+  type HealthRiskAlert,
+} from '../services/health/healthRisk';
 
 export type HealthSleepStage =
   | 'inBed'
@@ -62,10 +67,13 @@ export interface HealthActivityData {
   stepsToday?: number;
   distanceWalkingRunningKmToday?: number;
   activeEnergyKcalToday?: number;
+  activeEnergyGoalKcal?: number;
   basalEnergyKcalToday?: number;
   flightsClimbedToday?: number;
   exerciseMinutesToday?: number;
+  exerciseGoalMinutes?: number;
   standHoursToday?: number;
+  standGoalHours?: number;
   stepsHourlySeriesToday?: HealthTrendPoint[];
   activeEnergyHourlySeriesToday?: HealthTrendPoint[];
   exerciseMinutesHourlySeriesToday?: HealthTrendPoint[];
@@ -222,6 +230,7 @@ export interface HealthSnapshotDocument extends Document {
   uploadedAt: Date;
   snapshotDigest?: string;
   payloadBytes?: number;
+  alerts?: HealthRiskAlert[];
   note?: string;
   activity?: HealthActivityData;
   sleep?: HealthSleepData;
@@ -236,6 +245,10 @@ export interface HealthSnapshotDocument extends Document {
   updatedAt: Date;
 }
 
+type HealthRiskAlertRecord = Omit<HealthRiskAlert, 'triggeredAt'> & {
+  triggeredAt: Date;
+};
+
 const workoutSchema = new Schema<HealthWorkoutRecord>(
   {
     activityTypeCode: Number,
@@ -248,6 +261,43 @@ const workoutSchema = new Schema<HealthWorkoutRecord>(
     averageHeartRateBpm: Number,
     maxHeartRateBpm: Number,
     sourceDevice: String,
+  },
+  { _id: false }
+);
+
+const healthRiskAlertSchema = new Schema<HealthRiskAlertRecord>(
+  {
+    code: {
+      type: String,
+      enum: HEALTH_RISK_ALERT_CODES,
+      required: true,
+    },
+    severity: {
+      type: String,
+      enum: HEALTH_RISK_ALERT_SEVERITIES,
+      required: true,
+    },
+    title: {
+      type: String,
+      trim: true,
+      required: true,
+    },
+    message: {
+      type: String,
+      trim: true,
+      required: true,
+    },
+    recommendation: {
+      type: String,
+      trim: true,
+      required: true,
+    },
+    value: Number,
+    unit: String,
+    triggeredAt: {
+      type: Date,
+      required: true,
+    },
   },
   { _id: false }
 );
@@ -366,6 +416,10 @@ const healthSnapshotSchema = new Schema<HealthSnapshotDocument>(
       min: 0,
       default: 0,
     },
+    alerts: {
+      type: [healthRiskAlertSchema],
+      default: [],
+    },
     note: {
       type: String,
       trim: true,
@@ -375,10 +429,13 @@ const healthSnapshotSchema = new Schema<HealthSnapshotDocument>(
       stepsToday: Number,
       distanceWalkingRunningKmToday: Number,
       activeEnergyKcalToday: Number,
+      activeEnergyGoalKcal: Number,
       basalEnergyKcalToday: Number,
       flightsClimbedToday: Number,
       exerciseMinutesToday: Number,
+      exerciseGoalMinutes: Number,
       standHoursToday: Number,
+      standGoalHours: Number,
       stepsHourlySeriesToday: {
         type: [trendPointSchema],
         default: undefined,

@@ -2,6 +2,8 @@ import { Request, Response } from 'express';
 import { z } from 'zod';
 import { env } from '../config/env';
 import { HealthSnapshotDocument, HealthSnapshot } from '../models/HealthSnapshot';
+import { User } from '../models/User';
+import { UserHealthProfile } from '../models/UserHealthProfile';
 import {
   answerWithRag,
   answerWithRagPersonalized,
@@ -59,6 +61,13 @@ function formatMetric(value: number | undefined, unit = ''): string {
   return `${value}${unit}`;
 }
 
+function formatHoursMetric(valueMinutes: number | undefined, digits = 1): string {
+  if (typeof valueMinutes !== 'number' || !Number.isFinite(valueMinutes)) {
+    return '-';
+  }
+  return `${(valueMinutes / 60).toFixed(digits)}小时`;
+}
+
 function toNumber(value: unknown): number | undefined {
   if (typeof value !== 'number' || !Number.isFinite(value)) {
     return undefined;
@@ -90,9 +99,8 @@ function buildHealthContextFromClientSnapshot(snapshot: ClientHealthSnapshotPayl
       `活动: 步数=${formatMetric(toNumber(activity.stepsToday), '步')}, 距离=${formatMetric(
         toNumber(activity.distanceWalkingRunningKmToday),
         'km'
-      )}, 活动能量=${formatMetric(toNumber(activity.activeEnergyKcalToday), 'kcal')}, 运动分钟=${formatMetric(
-        toNumber(activity.exerciseMinutesToday),
-        'min'
+      )}, 活动能量=${formatMetric(toNumber(activity.activeEnergyKcalToday), 'kcal')}, 运动时长=${formatHoursMetric(
+        toNumber(activity.exerciseMinutesToday)
       )}`
     );
   }
@@ -100,22 +108,19 @@ function buildHealthContextFromClientSnapshot(snapshot: ClientHealthSnapshotPayl
   const sleep = toRecord(snapshot.sleep);
   if (sleep) {
     lines.push(
-      `睡眠: 入睡时长=${formatMetric(toNumber(sleep.asleepMinutesLast36h), 'min')}, 在床时长=${formatMetric(
-        toNumber(sleep.inBedMinutesLast36h),
-        'min'
+      `睡眠: 入睡时长=${formatHoursMetric(toNumber(sleep.asleepMinutesLast36h))}, 在床时长=${formatHoursMetric(
+        toNumber(sleep.inBedMinutesLast36h)
       )}, 睡眠评分=${formatMetric(toNumber(sleep.sleepScore))}`
     );
 
     const stage = toRecord(sleep.stageMinutesLast36h);
     if (stage) {
       lines.push(
-        `睡眠分期: Core=${formatMetric(
-          toNumber(stage.asleepCoreMinutes),
-          'min'
-        )}, Deep=${formatMetric(toNumber(stage.asleepDeepMinutes), 'min')}, REM=${formatMetric(
-          toNumber(stage.asleepREMMinutes),
-          'min'
-        )}, 醒来=${formatMetric(toNumber(stage.awakeMinutes), 'min')}`
+        `睡眠分期: Core=${formatHoursMetric(
+          toNumber(stage.asleepCoreMinutes)
+        )}, Deep=${formatHoursMetric(toNumber(stage.asleepDeepMinutes))}, REM=${formatHoursMetric(
+          toNumber(stage.asleepREMMinutes)
+        )}, 醒来=${formatHoursMetric(toNumber(stage.awakeMinutes))}`
       );
     }
 
@@ -125,7 +130,7 @@ function buildHealthContextFromClientSnapshot(snapshot: ClientHealthSnapshotPayl
         `睡眠呼吸暂停: 近30天事件=${formatMetric(
           toNumber(apnea.eventCountLast30d),
           '次'
-        )}, 累计时长=${formatMetric(toNumber(apnea.durationMinutesLast30d), 'min')}, 风险=${
+        )}, 累计时长=${formatHoursMetric(toNumber(apnea.durationMinutesLast30d))}, 风险=${
           typeof apnea.riskLevel === 'string' ? apnea.riskLevel : '-'
         }`
       );
@@ -160,7 +165,7 @@ function buildHealthContextFromClientSnapshot(snapshot: ClientHealthSnapshotPayl
 
   const environment = toRecord(snapshot.environment);
   if (environment) {
-    lines.push(`日照时长: ${formatMetric(toNumber(environment.daylightMinutesToday), 'min')}`);
+    lines.push(`日照时长: ${formatHoursMetric(toNumber(environment.daylightMinutesToday))}`);
   }
 
   const body = toRecord(snapshot.body);
@@ -181,9 +186,8 @@ function buildHealthContextFromClientSnapshot(snapshot: ClientHealthSnapshotPayl
         `华为活动: 步数=${formatMetric(toNumber(huaweiActivity.stepsToday), '步')}, 距离=${formatMetric(
           toNumber(huaweiActivity.distanceKmToday),
           'km'
-        )}, 卡路里=${formatMetric(toNumber(huaweiActivity.caloriesKcalToday), 'kcal')}, 活跃分钟=${formatMetric(
-          toNumber(huaweiActivity.activeMinutesToday),
-          'min'
+        )}, 卡路里=${formatMetric(toNumber(huaweiActivity.caloriesKcalToday), 'kcal')}, 活跃时长=${formatHoursMetric(
+          toNumber(huaweiActivity.activeMinutesToday)
         )}`
       );
     }
@@ -191,12 +195,10 @@ function buildHealthContextFromClientSnapshot(snapshot: ClientHealthSnapshotPayl
     const huaweiSleep = toRecord(huawei.sleep);
     if (huaweiSleep) {
       lines.push(
-        `华为睡眠: 总睡眠=${formatMetric(
-          toNumber(huaweiSleep.asleepMinutesLast24h),
-          'min'
-        )}, 深睡=${formatMetric(toNumber(huaweiSleep.deepSleepMinutesLast24h), 'min')}, REM=${formatMetric(
-          toNumber(huaweiSleep.remSleepMinutesLast24h),
-          'min'
+        `华为睡眠: 总睡眠=${formatHoursMetric(
+          toNumber(huaweiSleep.asleepMinutesLast24h)
+        )}, 深睡=${formatHoursMetric(toNumber(huaweiSleep.deepSleepMinutesLast24h))}, REM=${formatHoursMetric(
+          toNumber(huaweiSleep.remSleepMinutesLast24h)
         )}, 评分=${formatMetric(toNumber(huaweiSleep.sleepScore))}`
       );
     }
@@ -268,7 +270,7 @@ function buildHealthContextFromClientSnapshot(snapshot: ClientHealthSnapshotPayl
           : typeof recent.activityTypeCode === 'number'
           ? String(recent.activityTypeCode)
           : '未知'
-      }, 时长=${formatMetric(toNumber(recent.durationMinutes), 'min')}, 距离=${formatMetric(
+      }, 时长=${formatHoursMetric(toNumber(recent.durationMinutes))}, 距离=${formatMetric(
         toNumber(recent.totalDistanceKm),
         'km'
       )}`
@@ -282,7 +284,7 @@ function buildHealthContextFromClientSnapshot(snapshot: ClientHealthSnapshotPayl
           : typeof recent?.activityTypeCode === 'number'
           ? String(recent.activityTypeCode)
           : '未知'
-      }, 时长=${formatMetric(toNumber(recent?.durationMinutes), 'min')}, 距离=${formatMetric(
+      }, 时长=${formatHoursMetric(toNumber(recent?.durationMinutes))}, 距离=${formatMetric(
         toNumber(recent?.totalDistanceKm),
         'km'
       )}`
@@ -308,9 +310,8 @@ function buildHealthContext(snapshot: HealthSnapshotDocument): string {
       `活动: 步数=${formatMetric(activity.stepsToday, '步')}, 距离=${formatMetric(
         activity.distanceWalkingRunningKmToday,
         'km'
-      )}, 活动能量=${formatMetric(activity.activeEnergyKcalToday, 'kcal')}, 运动分钟=${formatMetric(
-        activity.exerciseMinutesToday,
-        'min'
+      )}, 活动能量=${formatMetric(activity.activeEnergyKcalToday, 'kcal')}, 运动时长=${formatHoursMetric(
+        activity.exerciseMinutesToday
       )}`
     );
   }
@@ -318,21 +319,18 @@ function buildHealthContext(snapshot: HealthSnapshotDocument): string {
   const sleep = snapshot.sleep;
   if (sleep) {
     lines.push(
-      `睡眠: 入睡时长=${formatMetric(sleep.asleepMinutesLast36h, 'min')}, 在床时长=${formatMetric(
-        sleep.inBedMinutesLast36h,
-        'min'
+      `睡眠: 入睡时长=${formatHoursMetric(sleep.asleepMinutesLast36h)}, 在床时长=${formatHoursMetric(
+        sleep.inBedMinutesLast36h
       )}, 睡眠评分=${formatMetric(sleep.sleepScore)}`
     );
 
     if (sleep.stageMinutesLast36h) {
       lines.push(
-        `睡眠分期: Core=${formatMetric(
-          sleep.stageMinutesLast36h.asleepCoreMinutes,
-          'min'
-        )}, Deep=${formatMetric(sleep.stageMinutesLast36h.asleepDeepMinutes, 'min')}, REM=${formatMetric(
-          sleep.stageMinutesLast36h.asleepREMMinutes,
-          'min'
-        )}, 醒来=${formatMetric(sleep.stageMinutesLast36h.awakeMinutes, 'min')}`
+        `睡眠分期: Core=${formatHoursMetric(
+          sleep.stageMinutesLast36h.asleepCoreMinutes
+        )}, Deep=${formatHoursMetric(sleep.stageMinutesLast36h.asleepDeepMinutes)}, REM=${formatHoursMetric(
+          sleep.stageMinutesLast36h.asleepREMMinutes
+        )}, 醒来=${formatHoursMetric(sleep.stageMinutesLast36h.awakeMinutes)}`
       );
     }
 
@@ -345,7 +343,7 @@ function buildHealthContext(snapshot: HealthSnapshotDocument): string {
         `睡眠呼吸暂停: 近30天事件=${formatMetric(
           sleep.apnea.eventCountLast30d,
           '次'
-        )}, 累计时长=${formatMetric(sleep.apnea.durationMinutesLast30d, 'min')}, 风险=${sleep.apnea.riskLevel ?? '-'}`
+        )}, 累计时长=${formatHoursMetric(sleep.apnea.durationMinutesLast30d)}, 风险=${sleep.apnea.riskLevel ?? '-'}`
       );
       if (sleep.apnea.reminder) {
         lines.push(`睡眠呼吸暂停提醒: ${sleep.apnea.reminder}`);
@@ -378,7 +376,7 @@ function buildHealthContext(snapshot: HealthSnapshotDocument): string {
 
   const environment = snapshot.environment;
   if (environment) {
-    lines.push(`日照时长: ${formatMetric(environment.daylightMinutesToday, 'min')}`);
+    lines.push(`日照时长: ${formatHoursMetric(environment.daylightMinutesToday)}`);
   }
 
   const body = snapshot.body;
@@ -398,21 +396,18 @@ function buildHealthContext(snapshot: HealthSnapshotDocument): string {
         `华为活动: 步数=${formatMetric(huawei.activity.stepsToday, '步')}, 距离=${formatMetric(
           huawei.activity.distanceKmToday,
           'km'
-        )}, 卡路里=${formatMetric(huawei.activity.caloriesKcalToday, 'kcal')}, 活跃分钟=${formatMetric(
-          huawei.activity.activeMinutesToday,
-          'min'
+        )}, 卡路里=${formatMetric(huawei.activity.caloriesKcalToday, 'kcal')}, 活跃时长=${formatHoursMetric(
+          huawei.activity.activeMinutesToday
         )}`
       );
     }
 
     if (huawei.sleep) {
       lines.push(
-        `华为睡眠: 总睡眠=${formatMetric(
-          huawei.sleep.asleepMinutesLast24h,
-          'min'
-        )}, 深睡=${formatMetric(huawei.sleep.deepSleepMinutesLast24h, 'min')}, REM=${formatMetric(
-          huawei.sleep.remSleepMinutesLast24h,
-          'min'
+        `华为睡眠: 总睡眠=${formatHoursMetric(
+          huawei.sleep.asleepMinutesLast24h
+        )}, 深睡=${formatHoursMetric(huawei.sleep.deepSleepMinutesLast24h)}, REM=${formatHoursMetric(
+          huawei.sleep.remSleepMinutesLast24h
         )}, 评分=${formatMetric(huawei.sleep.sleepScore)}`
       );
     }
@@ -475,7 +470,7 @@ function buildHealthContext(snapshot: HealthSnapshotDocument): string {
     lines.push(
       `运动记录: 共${snapshot.workouts.length}条, 最近一次=${
         recent.activityTypeName || recent.activityTypeCode || '未知'
-      }, 时长=${formatMetric(recent.durationMinutes, 'min')}, 距离=${formatMetric(
+      }, 时长=${formatHoursMetric(recent.durationMinutes)}, 距离=${formatMetric(
         recent.totalDistanceKm,
         'km'
       )}`
@@ -485,7 +480,7 @@ function buildHealthContext(snapshot: HealthSnapshotDocument): string {
     lines.push(
       `华为运动记录: 共${snapshot.huawei.workouts.length}条, 最近一次=${
         recent.activityTypeName || recent.activityTypeCode || '未知'
-      }, 时长=${formatMetric(recent.durationMinutes, 'min')}, 距离=${formatMetric(
+      }, 时长=${formatHoursMetric(recent.durationMinutes)}, 距离=${formatMetric(
         recent.totalDistanceKm,
         'km'
       )}`
@@ -497,6 +492,96 @@ function buildHealthContext(snapshot: HealthSnapshotDocument): string {
   }
 
   return lines.join('\n');
+}
+
+function buildHealthProfileContext(profile: {
+  llmHealthOverview?: string;
+  latestSignals?: Array<{
+    title: string;
+    severity: 'watch' | 'high';
+    latestMessage?: string;
+    latestRecommendation?: string;
+  }>;
+  trackedSignals?: Array<{
+    title: string;
+    occurrenceCount: number;
+    lastDetectedAt: Date;
+  }>;
+  lastSnapshotGeneratedAt?: Date;
+  lastSnapshotSource?: string;
+} | null): string | undefined {
+  if (!profile) {
+    return undefined;
+  }
+
+  const latestSignalCount = profile.latestSignals?.length ?? 0;
+  const highRiskCount = profile.latestSignals?.filter(signal => signal.severity === 'high').length ?? 0;
+  const trackedSignalCount = profile.trackedSignals?.length ?? 0;
+  const totalOccurrences =
+    profile.trackedSignals?.reduce((sum, signal) => sum + signal.occurrenceCount, 0) ?? 0;
+  const lines: string[] = [];
+  lines.push('用户历史健康画像:');
+  lines.push(`最近一次画像更新时间: ${profile.lastSnapshotGeneratedAt?.toISOString() ?? '-'}`);
+  lines.push(`最近一次画像来源: ${profile.lastSnapshotSource ?? '-'}`);
+  if (profile.llmHealthOverview) {
+    lines.push(`画像总览: ${profile.llmHealthOverview}`);
+  }
+  lines.push(
+    `模型统计: 本次异常 ${latestSignalCount} 项，高风险 ${highRiskCount} 项，历史累计异常类型 ${trackedSignalCount} 项，累计触发 ${totalOccurrences} 次。`
+  );
+
+  if (Array.isArray(profile.latestSignals) && profile.latestSignals.length > 0) {
+    lines.push(
+      `最近识别异常: ${profile.latestSignals
+        .slice(0, 6)
+        .map(
+          signal =>
+            `${signal.title}(${signal.severity === 'high' ? '高' : '中'}风险)：${signal.latestMessage ?? ''}${
+              signal.latestRecommendation ? `；建议 ${signal.latestRecommendation}` : ''
+            }`
+        )
+        .join(' | ')}`
+    );
+  }
+
+  if (Array.isArray(profile.trackedSignals) && profile.trackedSignals.length > 0) {
+    lines.push(
+      `累计异常记录: ${profile.trackedSignals
+        .slice(0, 8)
+        .map(signal => `${signal.title}(${signal.occurrenceCount}次, 最近 ${signal.lastDetectedAt.toISOString()})`)
+        .join(' | ')}`
+    );
+    lines.push(
+      `高频异常Top3: ${[...profile.trackedSignals]
+        .sort((left, right) => right.occurrenceCount - left.occurrenceCount)
+        .slice(0, 3)
+        .map(signal => `${signal.title}(${signal.occurrenceCount}次)`)
+        .join(' | ')}`
+    );
+  }
+
+  return lines.join('\n');
+}
+
+function buildUserBaselineContext(user: {
+  age?: number;
+  gender?: string;
+  heightCm?: number;
+  weightKg?: number;
+  experimentConsent?: boolean;
+} | null): string | undefined {
+  if (!user) {
+    return undefined;
+  }
+
+  return [
+    '账号基础信息:',
+    `年龄: ${user.age ?? '未知'}`,
+    `性别: ${user.gender ?? '未知'}`,
+    `身高: ${user.heightCm ?? '未知'} cm`,
+    `体重: ${user.weightKg ?? '未知'} kg`,
+    `实验参与: ${user.experimentConsent ? '已同意' : '未同意'}`,
+  ].join('\n');
 }
 
 function normalizeHistory(history: Array<{ role: 'user' | 'assistant'; content: string }> | undefined):
@@ -555,6 +640,10 @@ export async function ragHealthChat(req: Request, res: Response): Promise<void> 
   try {
     const clientSnapshot = parsed.data.latestHealthSnapshot;
     let latestSnapshot: HealthSnapshotDocument | null = null;
+    const [healthProfile, user] = await Promise.all([
+      UserHealthProfile.findOne({ userId: req.auth.userId }).exec(),
+      User.findById(req.auth.userId).exec(),
+    ]);
     let healthContext: string | undefined;
     let healthSnapshotUsed:
       | {
@@ -590,6 +679,10 @@ export async function ragHealthChat(req: Request, res: Response): Promise<void> 
           }
         : null;
     }
+
+    const userBaselineContext = buildUserBaselineContext(user);
+    const healthProfileContext = buildHealthProfileContext(healthProfile);
+    healthContext = [userBaselineContext, healthContext, healthProfileContext].filter(Boolean).join('\n\n') || undefined;
 
     const result = await answerWithRagPersonalized({
       question: parsed.data.message,

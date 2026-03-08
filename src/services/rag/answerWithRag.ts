@@ -39,6 +39,50 @@ export interface RagPersonalizedOptions {
   maxTokens?: number;
 }
 
+const HEALTH_DOMAIN_HINTS = [
+  '中医',
+  '养生',
+  '健康',
+  '调理',
+  '症状',
+  '体征',
+  '睡眠',
+  '失眠',
+  '熬夜',
+  '心悸',
+  '乏力',
+  '疲劳',
+  '焦虑',
+  '压力',
+  '情绪',
+  '饮食',
+  '食欲',
+  '胃',
+  '脾',
+  '肝',
+  '肺',
+  '肾',
+  '血糖',
+  '血氧',
+  '心率',
+  'hrv',
+  '血压',
+  '体重',
+  'bmi',
+  '运动',
+  '步数',
+  '头痛',
+  '腹痛',
+  '胸闷',
+  '腹泻',
+  '便秘',
+  '咳嗽',
+  '月经',
+  '经期',
+  '恢复',
+  '亚健康',
+];
+
 function buildSystemPrompt(personalized: boolean, responseStyle: RagResponseStyle): string {
   const lines = [
     '你是 QiAIchemy 的中医知识助手。',
@@ -46,6 +90,7 @@ function buildSystemPrompt(personalized: boolean, responseStyle: RagResponseStyl
     '用中文回答，结构清晰，尽量给出要点。',
     '每个关键结论后都要附引用标签，例如 [C1]、[C2]。',
     '不要给出替代医生诊断的结论；涉及疾病或紧急症状时提醒线下就医。',
+    '如果用户问题明显不属于中医、健康、养生或健康数据解读范围，直接说明当前助手不处理该类任务，不要勉强套用现有资料回答。',
   ];
 
   if (personalized) {
@@ -133,6 +178,54 @@ function buildUserContent(
   return parts.join('\n');
 }
 
+function isLikelyHealthQuery(question: string): boolean {
+  const normalized = question.trim().toLowerCase();
+  if (!normalized) {
+    return false;
+  }
+
+  return HEALTH_DOMAIN_HINTS.some((keyword) => normalized.includes(keyword));
+}
+
+function hasUsableEvidence(question: string, evidence: RetrievedChunk[]): boolean {
+  if (evidence.length === 0) {
+    return false;
+  }
+
+  const likelyHealthQuery = isLikelyHealthQuery(question);
+  const topScore = evidence[0]?.score ?? 0;
+  const topLexical = evidence[0]?.lexicalScore ?? 0;
+  const topEmbedding = evidence[0]?.embeddingScore ?? 0;
+  const supportiveHits = evidence.filter((item) => item.score >= 0.25).length;
+
+  if (!likelyHealthQuery) {
+    return topScore >= 0.28 && supportiveHits >= 2;
+  }
+
+  if (topScore >= 0.3) {
+    return true;
+  }
+
+  return supportiveHits >= 2 && (topLexical >= 0.04 || topEmbedding >= 0.58);
+}
+
+function buildOutOfScopeAnswer(question: string): string {
+  if (!isLikelyHealthQuery(question)) {
+    return [
+      '当前助手聚焦中医健康、养生和健康数据解读。',
+      '你这条问题更像通用规划/生活安排任务，不属于当前知识库覆盖范围，所以不适合硬答。',
+      '如果你愿意，可以改成健康相关问法，例如：',
+      '1. “带老人和孩子去成都 5 天，如何安排作息、步行量和饮食，减少疲劳？”',
+      '2. “旅行期间老人睡眠浅、孩子作息乱，怎么做中医养生式安排？”',
+    ].join('\n');
+  }
+
+  return [
+    '当前知识库里没有足够直接的证据支持这条回答，所以我不想硬凑结论。',
+    '你可以补充更具体的健康信息，例如症状、持续时间、近期作息、饮食、活动和关键指标，我再按中医健康框架重答。',
+  ].join('\n');
+}
+
 export async function answerWithRagPersonalized(
   options: RagPersonalizedOptions
 ): Promise<RagAnswerResult> {
@@ -153,6 +246,16 @@ export async function answerWithRagPersonalized(
   const evidence = await retrieveRelevantChunks(trimmedQuestion, topK, {
     graphContext: graphContext || undefined,
   });
+
+  if (!hasUsableEvidence(trimmedQuestion, evidence)) {
+    return {
+      answer: buildOutOfScopeAnswer(trimmedQuestion),
+      citations: [],
+      evidenceCount: evidence.length,
+      model: env.LLM_CHAT_MODEL,
+    };
+  }
+
   const personalized = Boolean(
     (options.conversationHistory && options.conversationHistory.length > 0) || options.healthContext
   );
