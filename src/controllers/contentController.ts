@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import {
   getLatestYouthWellnessSyncTime,
   listYouthWellnessArticles,
+  syncYouthWellnessArticles,
 } from '../services/content/youthWellnessArticles';
 
 function clampLimit(rawValue: unknown, fallback = 6): number {
@@ -12,9 +13,23 @@ function clampLimit(rawValue: unknown, fallback = 6): number {
   return Math.min(Math.max(Math.round(parsed), 1), 12);
 }
 
+function parseForceSync(rawValue: unknown): boolean {
+  if (typeof rawValue === 'boolean') {
+    return rawValue;
+  }
+  if (typeof rawValue !== 'string') {
+    return false;
+  }
+  return ['1', 'true', 'yes', 'refresh'].includes(rawValue.trim().toLowerCase());
+}
+
 export async function listYouthArticles(req: Request, res: Response): Promise<void> {
   try {
     const limit = clampLimit(req.query.limit, 6);
+    const forceSync = parseForceSync(req.query.forceSync);
+    if (forceSync) {
+      await syncYouthWellnessArticles(true);
+    }
     const [articles, lastSyncedAt] = await Promise.all([
       listYouthWellnessArticles(limit),
       getLatestYouthWellnessSyncTime(),

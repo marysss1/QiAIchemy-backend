@@ -7,7 +7,7 @@ import {
 
 const ARTICLE_REFRESH_INTERVAL_MS = 20 * 60 * 60 * 1000;
 const FETCH_TIMEOUT_MS = 20_000;
-const MAX_ARTICLES_PER_SOURCE = 4;
+const MAX_ARTICLES_PER_SOURCE = 6;
 
 type SourceConfig = {
   id: string;
@@ -36,30 +36,38 @@ type ScrapedArticle = {
   syncedAt: Date;
 };
 
-const YOUTH_ARTICLE_KEYWORDS = [
-  '青年',
-  '养生',
-  '睡眠',
-  '失眠',
-  '熬夜',
-  '焦虑',
-  '情绪',
-  '压力',
-  '久坐',
-  '肩颈',
-  '控糖',
-  '代谢',
-  '祛湿',
-  '健脾',
-  '上火',
-  '作息',
-  '运动',
-  '疲劳',
-  '脾胃',
-  '护肺',
-  '睡',
-  '调理',
+const ARTICLE_KEYWORD_WEIGHTS: Array<{ keyword: string; weight: number }> = [
+  { keyword: '中青年', weight: 8 },
+  { keyword: '青年', weight: 6 },
+  { keyword: '中年', weight: 5 },
+  { keyword: '养生', weight: 6 },
+  { keyword: '控糖', weight: 8 },
+  { keyword: '血糖', weight: 7 },
+  { keyword: '代谢', weight: 6 },
+  { keyword: '代谢综合征', weight: 7 },
+  { keyword: '体重管理', weight: 7 },
+  { keyword: '减脂', weight: 6 },
+  { keyword: '减重', weight: 6 },
+  { keyword: '控重', weight: 6 },
+  { keyword: '肥胖', weight: 5 },
+  { keyword: '饮食', weight: 4 },
+  { keyword: '作息', weight: 4 },
+  { keyword: '睡眠', weight: 5 },
+  { keyword: '失眠', weight: 4 },
+  { keyword: '熬夜', weight: 5 },
+  { keyword: '焦虑', weight: 4 },
+  { keyword: '情绪', weight: 3 },
+  { keyword: '压力', weight: 3 },
+  { keyword: '久坐', weight: 4 },
+  { keyword: '运动', weight: 4 },
+  { keyword: '疲劳', weight: 3 },
+  { keyword: '脾胃', weight: 3 },
+  { keyword: '健脾', weight: 3 },
+  { keyword: '祛湿', weight: 3 },
+  { keyword: '调理', weight: 3 },
 ];
+
+const ARTICLE_TAG_KEYWORDS = ARTICLE_KEYWORD_WEIGHTS.map(item => item.keyword);
 
 const SOURCES: SourceConfig[] = [
   {
@@ -107,7 +115,24 @@ function extractArticleId(url: string): string {
 
 function youthRelevanceScore(title: string, previewText = ''): number {
   const haystack = `${title} ${previewText}`;
-  return YOUTH_ARTICLE_KEYWORDS.reduce((score, keyword) => score + (haystack.includes(keyword) ? 1 : 0), 0);
+  const baseScore = ARTICLE_KEYWORD_WEIGHTS.reduce(
+    (score, item) => score + (haystack.includes(item.keyword) ? item.weight : 0),
+    0
+  );
+  const hasAgeFocus = ['中青年', '青年', '中年'].some(keyword => haystack.includes(keyword));
+  const hasWellnessFocus = ['养生', '控糖', '血糖', '代谢', '体重管理', '作息', '睡眠', '运动'].some(keyword =>
+    haystack.includes(keyword)
+  );
+  const metabolicFocus = ['控糖', '血糖', '代谢', '体重管理', '减脂', '减重', '控重'].some(keyword =>
+    haystack.includes(keyword)
+  );
+
+  return (
+    baseScore +
+    (hasAgeFocus && hasWellnessFocus ? 8 : 0) +
+    (metabolicFocus ? 5 : 0) +
+    (title.includes('养生') ? 3 : 0)
+  );
 }
 
 function parsePublishedAt(rawValue: string | undefined): Date | undefined {
@@ -269,7 +294,7 @@ async function scrapeArticle(source: SourceConfig, articleUrl: string, syncedAt:
     publishedAt,
     coverImageUrl,
     contentBlocks: buildContentBlocks(paragraphs, coverImageUrl, source.sourceName),
-    tags: YOUTH_ARTICLE_KEYWORDS.filter((keyword) => `${title} ${previewText}`.includes(keyword)).slice(0, 6),
+    tags: ARTICLE_TAG_KEYWORDS.filter((keyword) => `${title} ${previewText}`.includes(keyword)).slice(0, 8),
     fetchedAt: new Date(),
     syncedAt,
   };
@@ -322,7 +347,7 @@ async function scrapeSource(source: SourceConfig, syncedAt: Date): Promise<Scrap
 }
 
 export async function syncYouthWellnessArticles(force = false): Promise<number> {
-  if (!force && syncPromise) {
+  if (syncPromise) {
     return syncPromise;
   }
 
