@@ -184,10 +184,10 @@ export function detectHealthRiskAlerts(snapshot: HealthRiskSnapshotInput): Healt
         code: 'heart_rate_warning',
         severity: 'high',
         title: '心率预警',
-        message: `当前心率约 ${Math.round(latestHeartRate)} bpm，明显偏高。`,
+        message: `当前心率约 ${Math.round(latestHeartRate)} 次/分，明显偏高。`,
         recommendation: '请先停止活动并静坐休息；若伴胸闷、胸痛或头晕，请尽快就医。',
         value: latestHeartRate,
-        unit: 'bpm',
+        unit: '次/分',
         triggeredAt,
       });
     } else if (latestHeartRate <= 45) {
@@ -195,10 +195,10 @@ export function detectHealthRiskAlerts(snapshot: HealthRiskSnapshotInput): Healt
         code: 'heart_rate_warning',
         severity: 'high',
         title: '心率预警',
-        message: `当前心率约 ${Math.round(latestHeartRate)} bpm，偏低。`,
+        message: `当前心率约 ${Math.round(latestHeartRate)} 次/分，偏低。`,
         recommendation: '建议静息复测；若持续偏低或伴不适，请及时线下评估。',
         value: latestHeartRate,
-        unit: 'bpm',
+        unit: '次/分',
         triggeredAt,
       });
     } else if (latestHeartRate >= 115) {
@@ -206,10 +206,10 @@ export function detectHealthRiskAlerts(snapshot: HealthRiskSnapshotInput): Healt
         code: 'heart_rate_warning',
         severity: 'watch',
         title: '心率偏高提醒',
-        message: `当前心率约 ${Math.round(latestHeartRate)} bpm，提示近期压力或恢复状态需要关注。`,
+        message: `当前心率约 ${Math.round(latestHeartRate)} 次/分，提示近期压力或恢复状态需要关注。`,
         recommendation: '建议减少刺激性饮品、适度放松并继续观察 24 小时心率趋势。',
         value: latestHeartRate,
-        unit: 'bpm',
+        unit: '次/分',
         triggeredAt,
       });
     }
@@ -221,10 +221,10 @@ export function detectHealthRiskAlerts(snapshot: HealthRiskSnapshotInput): Healt
       code: 'resting_heart_rate_high',
       severity: restingHeartRate >= 90 ? 'high' : 'watch',
       title: '静息心率偏高',
-      message: `静息心率约 ${Math.round(restingHeartRate)} bpm，高于理想恢复区间。`,
+      message: `静息心率约 ${Math.round(restingHeartRate)} 次/分，高于理想恢复区间。`,
       recommendation: '优先保证睡眠、降低咖啡因和熬夜负荷；若持续升高，请考虑线下评估。',
       value: restingHeartRate,
-      unit: 'bpm',
+      unit: '次/分',
       triggeredAt,
     });
   }
@@ -255,7 +255,7 @@ export function detectHealthRiskAlerts(snapshot: HealthRiskSnapshotInput): Healt
       message: `最近一次可读睡眠约 ${asleepHours} 小时，少于 6 小时。`,
       recommendation: '建议今晚优先保证入睡时点，减少夜间用脑和屏幕刺激，先把睡眠补足。',
       value: asleepHours,
-      unit: 'hours',
+      unit: '小时',
       triggeredAt,
     });
   }
@@ -269,7 +269,7 @@ export function detectHealthRiskAlerts(snapshot: HealthRiskSnapshotInput): Healt
       message: `本次睡眠评分约 ${Math.round(sleepScore)}，恢复质量不理想。`,
       recommendation: '建议连续 3 天提前入睡、降低晚间刺激并观察清晨精神状态变化。',
       value: sleepScore,
-      unit: 'score',
+      unit: '分',
       triggeredAt,
     });
   }
@@ -283,7 +283,7 @@ export function detectHealthRiskAlerts(snapshot: HealthRiskSnapshotInput): Healt
       message: `今日步数约 ${Math.round(stepsToday)} 步，低于 2000 步。`,
       recommendation: '建议今天补 2-3 次、每次约 0.2 小时的快走，先把久坐状态打断。',
       value: stepsToday,
-      unit: 'steps',
+      unit: '步',
       triggeredAt,
     });
   }
@@ -298,7 +298,7 @@ export function detectHealthRiskAlerts(snapshot: HealthRiskSnapshotInput): Healt
       message: `今日日照时长约 ${daylightHours} 小时，户外光照暴露不足。`,
       recommendation: '建议白天尽量安排 0.3-0.5 小时户外步行或晒太阳，帮助节律与情绪稳定。',
       value: daylightHours,
-      unit: 'hours',
+      unit: '小时',
       triggeredAt,
     });
   }
@@ -327,7 +327,7 @@ export function detectHealthRiskAlerts(snapshot: HealthRiskSnapshotInput): Healt
       message: `截至当前站立时长约 ${Math.round(standHours)} 小时，偏少。`,
       recommendation: '建议把起身活动拆成每小时一次，先把久坐时间切碎。',
       value: standHours,
-      unit: 'hours',
+      unit: '小时',
       triggeredAt,
     });
   }
@@ -338,13 +338,13 @@ export function detectHealthRiskAlerts(snapshot: HealthRiskSnapshotInput): Healt
   const exerciseGoal = snapshot.activity?.exerciseGoalMinutes;
   const ringIssues: string[] = [];
   if (typeof moveGoal === 'number' && typeof moveValue === 'number' && moveValue < moveGoal) {
-    ringIssues.push(`Move ${formatRingProgress(moveValue, moveGoal, 'kcal')}`);
+    ringIssues.push(`活动能量 ${formatRingProgress(moveValue, moveGoal, '千卡')}`);
   }
   if (typeof exerciseGoal === 'number' && typeof exerciseValue === 'number' && exerciseValue < exerciseGoal) {
-    ringIssues.push(`Exercise ${formatRingProgress(toHours(exerciseValue), toHours(exerciseGoal), 'h', 1)}`);
+    ringIssues.push(`锻炼时长 ${formatRingProgress(toHours(exerciseValue), toHours(exerciseGoal), '小时', 1)}`);
   }
   if (typeof standGoal === 'number' && typeof standHours === 'number' && standHours < standGoal) {
-    ringIssues.push(`Stand ${formatRingProgress(standHours, standGoal, 'h')}`);
+    ringIssues.push(`站立时长 ${formatRingProgress(standHours, standGoal, '小时')}`);
   }
   if (isEvening && ringIssues.length > 0) {
     putAlert(alertsByCode, {
@@ -363,10 +363,10 @@ export function detectHealthRiskAlerts(snapshot: HealthRiskSnapshotInput): Healt
       code: 'heart_rate_variability_low',
       severity: hrv < 15 ? 'high' : 'watch',
       title: '心率变异性偏低',
-      message: `HRV 约 ${Math.round(hrv)} ms，提示近期恢复储备不足。`,
+      message: `心率变异性约 ${Math.round(hrv)} 毫秒，提示近期恢复储备不足。`,
       recommendation: '建议先降强度、重节律、少熬夜，并用呼吸放松或散步帮助恢复。',
       value: hrv,
-      unit: 'ms',
+      unit: '毫秒',
       triggeredAt,
     });
   }
@@ -376,11 +376,11 @@ export function detectHealthRiskAlerts(snapshot: HealthRiskSnapshotInput): Healt
     putAlert(alertsByCode, {
       code: 'vo2max_low',
       severity: vo2Max < 30 ? 'high' : 'watch',
-      title: '有氧适能偏低',
-      message: `VO2 Max 约 ${vo2Max.toFixed(1)} ml/kg/min，低于 35。`,
+      title: '心肺耐力偏低',
+      message: `最大摄氧量约 ${vo2Max.toFixed(1)} 毫升/千克/分钟，低于理想范围。`,
       recommendation: '建议以低门槛快走、骑行等可持续运动逐步建立基础耐力。',
       value: vo2Max,
-      unit: 'ml/kg/min',
+      unit: '毫升/千克/分钟',
       triggeredAt,
     });
   }
@@ -417,10 +417,10 @@ export function detectHealthRiskAlerts(snapshot: HealthRiskSnapshotInput): Healt
     putAlert(alertsByCode, {
       code: 'bmi_abnormal',
       severity: bmi < 17 || bmi >= 28 ? 'high' : 'watch',
-      title: isUnderweight ? 'BMI 偏低提醒' : 'BMI 偏高提醒',
+      title: isUnderweight ? '体重指数偏低提醒' : '体重指数偏高提醒',
       message: isUnderweight
-        ? `按当前身高体重估算 BMI 约 ${bmi.toFixed(1)}，低于理想范围。`
-        : `按当前身高体重估算 BMI 约 ${bmi.toFixed(1)}，高于理想范围。`,
+        ? `按当前身高体重估算体重指数约 ${bmi.toFixed(1)}，低于理想范围。`
+        : `按当前身高体重估算体重指数约 ${bmi.toFixed(1)}，高于理想范围。`,
       recommendation: isUnderweight
         ? '建议先排查是否长期进食不足、睡眠差或压力过高，优先恢复规律进食与睡眠。'
         : '建议先从作息、进食节律和基础活动量连续调整，不要用短期极端节食来处理。',
@@ -450,7 +450,7 @@ export function detectHealthRiskAlerts(snapshot: HealthRiskSnapshotInput): Healt
           : '检测到睡眠呼吸暂停风险信号。',
       recommendation: '建议尽快做睡眠专项评估，避免长期忽视造成白天疲劳和认知下降。',
       value: apneaEventCount,
-      unit: 'events/30d',
+      unit: '次/30天',
       triggeredAt,
     });
   }

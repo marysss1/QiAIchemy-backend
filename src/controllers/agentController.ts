@@ -116,9 +116,9 @@ function buildHealthContextFromClientSnapshot(snapshot: ClientHealthSnapshotPayl
     const stage = toRecord(sleep.stageMinutesLast36h);
     if (stage) {
       lines.push(
-        `睡眠分期: Core=${formatHoursMetric(
+        `睡眠分期: 浅睡=${formatHoursMetric(
           toNumber(stage.asleepCoreMinutes)
-        )}, Deep=${formatHoursMetric(toNumber(stage.asleepDeepMinutes))}, REM=${formatHoursMetric(
+        )}, 深睡=${formatHoursMetric(toNumber(stage.asleepDeepMinutes))}, 快速眼动=${formatHoursMetric(
           toNumber(stage.asleepREMMinutes)
         )}, 醒来=${formatHoursMetric(toNumber(stage.awakeMinutes))}`
       );
@@ -143,13 +143,13 @@ function buildHealthContextFromClientSnapshot(snapshot: ClientHealthSnapshotPayl
   const heart = toRecord(snapshot.heart);
   if (heart) {
     lines.push(
-      `心脏: 最新心率=${formatMetric(toNumber(heart.latestHeartRateBpm), 'bpm')}, 静息心率=${formatMetric(
+      `心脏: 最新心率=${formatMetric(toNumber(heart.latestHeartRateBpm), '次/分')}, 静息心率=${formatMetric(
         toNumber(heart.restingHeartRateBpm),
-        'bpm'
-      )}, HRV=${formatMetric(toNumber(heart.heartRateVariabilityMs), 'ms')}, 收缩压/舒张压=${formatMetric(
+        '次/分'
+      )}, 心率变异性=${formatMetric(toNumber(heart.heartRateVariabilityMs), '毫秒')}, 收缩压/舒张压=${formatMetric(
         toNumber(heart.systolicBloodPressureMmhg),
-        'mmHg'
-      )}/${formatMetric(toNumber(heart.diastolicBloodPressureMmhg), 'mmHg')}`
+        '毫米汞柱'
+      )}/${formatMetric(toNumber(heart.diastolicBloodPressureMmhg), '毫米汞柱')}`
     );
   }
 
@@ -171,7 +171,7 @@ function buildHealthContextFromClientSnapshot(snapshot: ClientHealthSnapshotPayl
   const body = toRecord(snapshot.body);
   if (body) {
     lines.push(
-      `身体指标: 呼吸率=${formatMetric(toNumber(body.respiratoryRateBrpm), 'brpm')}, 体温=${formatMetric(
+      `身体指标: 呼吸率=${formatMetric(toNumber(body.respiratoryRateBrpm), '次/分')}, 体温=${formatMetric(
         toNumber(body.bodyTemperatureCelsius),
         '°C'
       )}, 体重=${formatMetric(toNumber(body.bodyMassKg), 'kg')}`
@@ -197,7 +197,7 @@ function buildHealthContextFromClientSnapshot(snapshot: ClientHealthSnapshotPayl
       lines.push(
         `华为睡眠: 总睡眠=${formatHoursMetric(
           toNumber(huaweiSleep.asleepMinutesLast24h)
-        )}, 深睡=${formatHoursMetric(toNumber(huaweiSleep.deepSleepMinutesLast24h))}, REM=${formatHoursMetric(
+        )}, 深睡=${formatHoursMetric(toNumber(huaweiSleep.deepSleepMinutesLast24h))}, 快速眼动=${formatHoursMetric(
           toNumber(huaweiSleep.remSleepMinutesLast24h)
         )}, 评分=${formatMetric(toNumber(huaweiSleep.sleepScore))}`
       );
@@ -208,11 +208,11 @@ function buildHealthContextFromClientSnapshot(snapshot: ClientHealthSnapshotPayl
       lines.push(
         `华为心脏: 最新心率=${formatMetric(
           toNumber(huaweiHeart.latestHeartRateBpm),
-          'bpm'
-        )}, 静息心率=${formatMetric(toNumber(huaweiHeart.restingHeartRateBpm), 'bpm')}, 最高/最低=${formatMetric(
+          '次/分'
+        )}, 静息心率=${formatMetric(toNumber(huaweiHeart.restingHeartRateBpm), '次/分')}, 最高/最低=${formatMetric(
           toNumber(huaweiHeart.maxHeartRateBpmLast24h),
-          'bpm'
-        )}/${formatMetric(toNumber(huaweiHeart.minHeartRateBpmLast24h), 'bpm')}`
+          '次/分'
+        )}/${formatMetric(toNumber(huaweiHeart.minHeartRateBpmLast24h), '次/分')}`
       );
       if (typeof huaweiHeart.heartRateWarning === 'string' && huaweiHeart.heartRateWarning.trim().length > 0) {
         lines.push(`华为心率预警: ${huaweiHeart.heartRateWarning.trim()}`);
@@ -234,9 +234,9 @@ function buildHealthContextFromClientSnapshot(snapshot: ClientHealthSnapshotPayl
       lines.push(
         `华为压力: 最新=${formatMetric(
           toNumber(huaweiStress.latestStressScore)
-        )}, 平均=${formatMetric(toNumber(huaweiStress.averageStressScoreToday))}, HRV=${formatMetric(
+        )}, 平均=${formatMetric(toNumber(huaweiStress.averageStressScoreToday))}, 心率变异性=${formatMetric(
           toNumber(huaweiStress.hrvMs),
-          'ms'
+          '毫秒'
         )}`
       );
     }
@@ -244,7 +244,7 @@ function buildHealthContextFromClientSnapshot(snapshot: ClientHealthSnapshotPayl
     const huaweiBody = toRecord(huawei.body);
     if (huaweiBody) {
       lines.push(
-        `华为身体成分: 体重=${formatMetric(toNumber(huaweiBody.weightKg), 'kg')}, BMI=${formatMetric(
+        `华为身体成分: 体重=${formatMetric(toNumber(huaweiBody.weightKg), 'kg')}, 体重指数=${formatMetric(
           toNumber(huaweiBody.bmi)
         )}, 体脂=${formatMetric(toNumber(huaweiBody.bodyFatPercent), '%')}`
       );
@@ -255,8 +255,8 @@ function buildHealthContextFromClientSnapshot(snapshot: ClientHealthSnapshotPayl
       lines.push(
         `华为血压: 收缩压/舒张压=${formatMetric(
           toNumber(huaweiBloodPressure.latestSystolicMmhg),
-          'mmHg'
-        )}/${formatMetric(toNumber(huaweiBloodPressure.latestDiastolicMmhg), 'mmHg')}`
+          '毫米汞柱'
+        )}/${formatMetric(toNumber(huaweiBloodPressure.latestDiastolicMmhg), '毫米汞柱')}`
       );
     }
   }
@@ -326,9 +326,9 @@ function buildHealthContext(snapshot: HealthSnapshotDocument): string {
 
     if (sleep.stageMinutesLast36h) {
       lines.push(
-        `睡眠分期: Core=${formatHoursMetric(
+        `睡眠分期: 浅睡=${formatHoursMetric(
           sleep.stageMinutesLast36h.asleepCoreMinutes
-        )}, Deep=${formatHoursMetric(sleep.stageMinutesLast36h.asleepDeepMinutes)}, REM=${formatHoursMetric(
+        )}, 深睡=${formatHoursMetric(sleep.stageMinutesLast36h.asleepDeepMinutes)}, 快速眼动=${formatHoursMetric(
           sleep.stageMinutesLast36h.asleepREMMinutes
         )}, 醒来=${formatHoursMetric(sleep.stageMinutesLast36h.awakeMinutes)}`
       );
@@ -354,13 +354,13 @@ function buildHealthContext(snapshot: HealthSnapshotDocument): string {
   const heart = snapshot.heart;
   if (heart) {
     lines.push(
-      `心脏: 最新心率=${formatMetric(heart.latestHeartRateBpm, 'bpm')}, 静息心率=${formatMetric(
+      `心脏: 最新心率=${formatMetric(heart.latestHeartRateBpm, '次/分')}, 静息心率=${formatMetric(
         heart.restingHeartRateBpm,
-        'bpm'
-      )}, HRV=${formatMetric(heart.heartRateVariabilityMs, 'ms')}, 收缩压/舒张压=${formatMetric(
+        '次/分'
+      )}, 心率变异性=${formatMetric(heart.heartRateVariabilityMs, '毫秒')}, 收缩压/舒张压=${formatMetric(
         heart.systolicBloodPressureMmhg,
-        'mmHg'
-      )}/${formatMetric(heart.diastolicBloodPressureMmhg, 'mmHg')}`
+        '毫米汞柱'
+      )}/${formatMetric(heart.diastolicBloodPressureMmhg, '毫米汞柱')}`
     );
   }
 
@@ -382,7 +382,7 @@ function buildHealthContext(snapshot: HealthSnapshotDocument): string {
   const body = snapshot.body;
   if (body) {
     lines.push(
-      `身体指标: 呼吸率=${formatMetric(body.respiratoryRateBrpm, 'brpm')}, 体温=${formatMetric(
+      `身体指标: 呼吸率=${formatMetric(body.respiratoryRateBrpm, '次/分')}, 体温=${formatMetric(
         body.bodyTemperatureCelsius,
         '°C'
       )}, 体重=${formatMetric(body.bodyMassKg, 'kg')}`
@@ -406,7 +406,7 @@ function buildHealthContext(snapshot: HealthSnapshotDocument): string {
       lines.push(
         `华为睡眠: 总睡眠=${formatHoursMetric(
           huawei.sleep.asleepMinutesLast24h
-        )}, 深睡=${formatHoursMetric(huawei.sleep.deepSleepMinutesLast24h)}, REM=${formatHoursMetric(
+        )}, 深睡=${formatHoursMetric(huawei.sleep.deepSleepMinutesLast24h)}, 快速眼动=${formatHoursMetric(
           huawei.sleep.remSleepMinutesLast24h
         )}, 评分=${formatMetric(huawei.sleep.sleepScore)}`
       );
@@ -416,11 +416,11 @@ function buildHealthContext(snapshot: HealthSnapshotDocument): string {
       lines.push(
         `华为心脏: 最新心率=${formatMetric(
           huawei.heart.latestHeartRateBpm,
-          'bpm'
-        )}, 静息心率=${formatMetric(huawei.heart.restingHeartRateBpm, 'bpm')}, 最高/最低=${formatMetric(
+          '次/分'
+        )}, 静息心率=${formatMetric(huawei.heart.restingHeartRateBpm, '次/分')}, 最高/最低=${formatMetric(
           huawei.heart.maxHeartRateBpmLast24h,
-          'bpm'
-        )}/${formatMetric(huawei.heart.minHeartRateBpmLast24h, 'bpm')}`
+          '次/分'
+        )}/${formatMetric(huawei.heart.minHeartRateBpmLast24h, '次/分')}`
       );
       if (huawei.heart.heartRateWarning) {
         lines.push(`华为心率预警: ${huawei.heart.heartRateWarning}`);
@@ -440,16 +440,16 @@ function buildHealthContext(snapshot: HealthSnapshotDocument): string {
       lines.push(
         `华为压力: 最新=${formatMetric(
           huawei.stress.latestStressScore
-        )}, 平均=${formatMetric(huawei.stress.averageStressScoreToday)}, HRV=${formatMetric(
+        )}, 平均=${formatMetric(huawei.stress.averageStressScoreToday)}, 心率变异性=${formatMetric(
           huawei.stress.hrvMs,
-          'ms'
+          '毫秒'
         )}`
       );
     }
 
     if (huawei.body) {
       lines.push(
-        `华为身体成分: 体重=${formatMetric(huawei.body.weightKg, 'kg')}, BMI=${formatMetric(
+        `华为身体成分: 体重=${formatMetric(huawei.body.weightKg, 'kg')}, 体重指数=${formatMetric(
           huawei.body.bmi
         )}, 体脂=${formatMetric(huawei.body.bodyFatPercent, '%')}`
       );
@@ -459,8 +459,8 @@ function buildHealthContext(snapshot: HealthSnapshotDocument): string {
       lines.push(
         `华为血压: 收缩压/舒张压=${formatMetric(
           huawei.bloodPressure.latestSystolicMmhg,
-          'mmHg'
-        )}/${formatMetric(huawei.bloodPressure.latestDiastolicMmhg, 'mmHg')}`
+          '毫米汞柱'
+        )}/${formatMetric(huawei.bloodPressure.latestDiastolicMmhg, '毫米汞柱')}`
       );
     }
   }
