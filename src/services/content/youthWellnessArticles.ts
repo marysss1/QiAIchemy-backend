@@ -303,11 +303,14 @@ async function scrapeArticle(source: SourceConfig, articleUrl: string, syncedAt:
 async function scrapeSource(source: SourceConfig, syncedAt: Date): Promise<ScrapedArticle[]> {
   const html = await fetchHtml(source.listingUrl);
   const $ = load(html);
-  const linkMap = new Map<string, { title: string; score: number }>();
+  const linkMap = new Map<string, { title: string; score: number; order: number }>();
+  let order = 0;
 
   $('a[href]').each((_, element) => {
     const title = cleanText($(element).text());
     const href = absoluteUrl(source.listingUrl, $(element).attr('href'));
+    const currentOrder = order;
+    order += 1;
     if (!href || !href.includes('/Html/News/Articles/') || !title) {
       return;
     }
@@ -319,31 +322,57 @@ async function scrapeSource(source: SourceConfig, syncedAt: Date): Promise<Scrap
 
     const existing = linkMap.get(href);
     if (!existing || score > existing.score) {
-      linkMap.set(href, { title, score });
+      linkMap.set(href, { title, score, order: currentOrder });
     }
   });
 
-  const candidates = [...linkMap.entries()]
-    .sort((a, b) => b[1].score - a[1].score)
-    .slice(0, MAX_ARTICLES_PER_SOURCE + 4);
+  const byRecency = [...linkMap.entries()]
+    .sort((a, b) => a[1].order - b[1].order)
+    .slice(0, MAX_ARTICLES_PER_SOURCE * 4);
+  const byRelevance = [...linkMap.entries()]
+    .sort((a, b) => b[1].score - a[1].score || a[1].order - b[1].order)
+    .slice(0, MAX_ARTICLES_PER_SOURCE * 2);
+  const candidates: Array<[string, { title: string; score: number; order: number }]> = [];
+  const seenUrls = new Set<string>();
 
-  const articles: ScrapedArticle[] = [];
-  for (const [url] of candidates) {
+  for (const entry of [...byRecency, ...byRelevance]) {
+    const [url] = entry;
+    if (seenUrls.has(url)) {
+      continue;
+    }
+    seenUrls.add(url);
+    candidates.push(entry);
+  }
+
+  const articles: Array<ScrapedArticle & { order: number }> = [];
+  for (const [url, meta] of candidates) {
     try {
       const article = await scrapeArticle(source, url, syncedAt);
       if (article) {
-        articles.push(article);
+        articles.push({
+          ...article,
+          order: meta.order,
+        });
       }
     } catch (error) {
       console.warn('[content] scrape article failed:', url, error);
     }
 
-    if (articles.length >= MAX_ARTICLES_PER_SOURCE) {
+    if (articles.length >= MAX_ARTICLES_PER_SOURCE * 2) {
       break;
     }
   }
 
-  return articles;
+  return articles
+    .sort((a, b) => {
+      const publishedDiff = (b.publishedAt?.getTime() ?? 0) - (a.publishedAt?.getTime() ?? 0);
+      if (publishedDiff !== 0) {
+        return publishedDiff;
+      }
+      return a.order - b.order;
+    })
+    .slice(0, MAX_ARTICLES_PER_SOURCE)
+    .map(({ order: _order, ...article }) => article);
 }
 
 export async function syncYouthWellnessArticles(force = false): Promise<number> {

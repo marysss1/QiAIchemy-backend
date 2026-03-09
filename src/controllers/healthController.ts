@@ -96,6 +96,10 @@ const healthSleepDataSchema = z
     awakeMinutesLast36h: optionalNumber,
     sampleCountLast36h: optionalNumber,
     sleepScore: optionalNumber,
+    sleepScoreSource: z.enum(['today', 'latestAvailable']).optional(),
+    sleepScoreWindowStart: optionalDateTime,
+    sleepScoreWindowEnd: optionalDateTime,
+    sleepScoreFallbackUsed: z.boolean().optional(),
     stageMinutesLast36h: healthSleepStageMinutesSchema.optional(),
     samplesLast36h: z.array(healthSleepSampleSchema).max(1000).optional(),
     apnea: healthSleepApneaDataSchema.optional(),
@@ -113,6 +117,8 @@ const healthHeartDataSchema = z
     systolicBloodPressureMmhg: optionalNumber,
     diastolicBloodPressureMmhg: optionalNumber,
     heartRateSeriesLast24h: z.array(healthTrendPointSchema).max(500).optional(),
+    restingHeartRateSeriesLast24h: z.array(healthTrendPointSchema).max(500).optional(),
+    heartRateVariabilitySeriesLast24h: z.array(healthTrendPointSchema).max(500).optional(),
     heartRateVariabilitySeriesLast7d: z.array(healthTrendPointSchema).max(500).optional(),
   })
   .passthrough();
@@ -127,6 +133,7 @@ const healthOxygenDataSchema = z
 const healthMetabolicDataSchema = z
   .object({
     bloodGlucoseMgDl: optionalNumber,
+    bloodGlucoseSeriesLast24h: z.array(healthTrendPointSchema).max(500).optional(),
     bloodGlucoseSeriesLast7d: z.array(healthTrendPointSchema).max(500).optional(),
   })
   .passthrough();
@@ -584,6 +591,26 @@ async function syncUserHealthProfile(args: {
   ).exec();
 }
 
+async function syncUserHealthProfileSafely(args: {
+  userId: string;
+  snapshotId: string;
+  source: string;
+  generatedAt: Date;
+  alerts: HealthRiskAlert[];
+  userProfile?: {
+    age?: number;
+    gender?: string;
+    heightCm?: number;
+    weightKg?: number;
+  } | null;
+}): Promise<void> {
+  try {
+    await syncUserHealthProfile(args);
+  } catch (error) {
+    console.error('[health] syncUserHealthProfile failed:', error);
+  }
+}
+
 function getSnapshotPayload(body: unknown): { snapshot: HealthUploadPayload; syncReason: HealthSyncReason } {
   const normalizeSnapshot = (raw: HealthUploadPayloadRaw): HealthUploadPayload => ({
     ...raw,
@@ -660,6 +687,7 @@ export async function uploadHealthSnapshot(req: Request, res: Response): Promise
         payloadBytes,
         alerts,
         note: snapshot.note ?? '',
+        profile: snapshot.profile,
         activity: snapshot.activity,
         sleep: snapshot.sleep,
         heart: snapshot.heart,
@@ -671,7 +699,7 @@ export async function uploadHealthSnapshot(req: Request, res: Response): Promise
         workouts: snapshot.workouts ?? [],
       });
       await existingSameSample.save();
-      await syncUserHealthProfile({
+      await syncUserHealthProfileSafely({
         userId,
         snapshotId: existingSameSample.id,
         source: snapshot.source,
@@ -706,7 +734,7 @@ export async function uploadHealthSnapshot(req: Request, res: Response): Promise
     if (latest && latest.snapshotDigest === snapshotDigest) {
       const latestUploadMs = new Date(latest.uploadedAt).getTime();
       if (Number.isFinite(latestUploadMs) && nowMs - latestUploadMs < HEALTH_RETRY_DEDUP_WINDOW_MS) {
-        await syncUserHealthProfile({
+        await syncUserHealthProfileSafely({
           userId,
           snapshotId: String(latest._id),
           source: snapshot.source,
@@ -739,6 +767,7 @@ export async function uploadHealthSnapshot(req: Request, res: Response): Promise
       payloadBytes,
       alerts,
       note: snapshot.note ?? '',
+      profile: snapshot.profile,
       activity: snapshot.activity,
       sleep: snapshot.sleep,
       heart: snapshot.heart,
@@ -749,7 +778,7 @@ export async function uploadHealthSnapshot(req: Request, res: Response): Promise
       huawei: snapshot.huawei,
       workouts: snapshot.workouts ?? [],
     });
-    await syncUserHealthProfile({
+    await syncUserHealthProfileSafely({
       userId,
       snapshotId: created.id,
       source: snapshot.source,

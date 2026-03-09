@@ -85,6 +85,10 @@ export interface HealthSleepData {
   awakeMinutesLast36h?: number;
   sampleCountLast36h?: number;
   sleepScore?: number;
+  sleepScoreSource?: 'today' | 'latestAvailable';
+  sleepScoreWindowStart?: Date;
+  sleepScoreWindowEnd?: Date;
+  sleepScoreFallbackUsed?: boolean;
   stageMinutesLast36h?: HealthSleepStageMinutes;
   samplesLast36h?: HealthSleepSample[];
   apnea?: HealthSleepApneaData;
@@ -100,6 +104,8 @@ export interface HealthHeartData {
   systolicBloodPressureMmhg?: number;
   diastolicBloodPressureMmhg?: number;
   heartRateSeriesLast24h?: HealthTrendPoint[];
+  restingHeartRateSeriesLast24h?: HealthTrendPoint[];
+  heartRateVariabilitySeriesLast24h?: HealthTrendPoint[];
   heartRateVariabilitySeriesLast7d?: HealthTrendPoint[];
 }
 
@@ -110,6 +116,7 @@ export interface HealthOxygenData {
 
 export interface HealthMetabolicData {
   bloodGlucoseMgDl?: number;
+  bloodGlucoseSeriesLast24h?: HealthTrendPoint[];
   bloodGlucoseSeriesLast7d?: HealthTrendPoint[];
 }
 
@@ -125,6 +132,12 @@ export interface HealthBodyData {
   respiratoryRateSeriesLast7d?: HealthTrendPoint[];
   bodyTemperatureSeriesLast7d?: HealthTrendPoint[];
   bodyMassSeriesLast30d?: HealthTrendPoint[];
+}
+
+export interface HealthProfileData {
+  age?: number;
+  heightCm?: number;
+  weightKg?: number;
 }
 
 export type HuaweiSleepStage = 'deep' | 'light' | 'rem' | 'awake' | 'nap' | 'unknown';
@@ -232,6 +245,7 @@ export interface HealthSnapshotDocument extends Document {
   payloadBytes?: number;
   alerts?: HealthRiskAlert[];
   note?: string;
+  profile?: HealthProfileData;
   activity?: HealthActivityData;
   sleep?: HealthSleepData;
   heart?: HealthHeartData;
@@ -455,6 +469,10 @@ const healthSnapshotSchema = new Schema<HealthSnapshotDocument>(
       awakeMinutesLast36h: Number,
       sampleCountLast36h: Number,
       sleepScore: Number,
+      sleepScoreSource: String,
+      sleepScoreWindowStart: Date,
+      sleepScoreWindowEnd: Date,
+      sleepScoreFallbackUsed: Boolean,
       stageMinutesLast36h: {
         type: sleepStageMinutesSchema,
         default: undefined,
@@ -481,6 +499,14 @@ const healthSnapshotSchema = new Schema<HealthSnapshotDocument>(
         type: [trendPointSchema],
         default: undefined,
       },
+      restingHeartRateSeriesLast24h: {
+        type: [trendPointSchema],
+        default: undefined,
+      },
+      heartRateVariabilitySeriesLast24h: {
+        type: [trendPointSchema],
+        default: undefined,
+      },
       heartRateVariabilitySeriesLast7d: {
         type: [trendPointSchema],
         default: undefined,
@@ -495,10 +521,19 @@ const healthSnapshotSchema = new Schema<HealthSnapshotDocument>(
     },
     metabolic: {
       bloodGlucoseMgDl: Number,
+      bloodGlucoseSeriesLast24h: {
+        type: [trendPointSchema],
+        default: undefined,
+      },
       bloodGlucoseSeriesLast7d: {
         type: [trendPointSchema],
         default: undefined,
       },
+    },
+    profile: {
+      age: Number,
+      heightCm: Number,
+      weightKg: Number,
     },
     environment: {
       daylightMinutesToday: Number,
