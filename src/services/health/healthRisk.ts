@@ -53,6 +53,7 @@ type TrendPointInput = {
 type HealthRiskSnapshotInput = {
   generatedAt: string;
   profile?: {
+    age?: number;
     heightCm?: number;
     weightKg?: number;
   };
@@ -145,6 +146,16 @@ function toHours(valueMinutes: number, digits = 1): number {
   return Number((valueMinutes / 60).toFixed(digits));
 }
 
+function formatDurationMinutes(valueMinutes: number | undefined, digits = 1): string {
+  if (typeof valueMinutes !== 'number' || !Number.isFinite(valueMinutes)) {
+    return '-';
+  }
+  if (Math.abs(valueMinutes) < 60) {
+    return `${Math.round(valueMinutes)} 分钟`;
+  }
+  return `${toHours(valueMinutes, digits)} 小时`;
+}
+
 function calculateBmi(weightKg: number, heightCm: number): number | undefined {
   if (!Number.isFinite(weightKg) || !Number.isFinite(heightCm) || weightKg <= 0 || heightCm <= 0) {
     return undefined;
@@ -167,6 +178,25 @@ function formatRingProgress(
   }
   const goalValue = typeof goal === 'number' && Number.isFinite(goal) ? formatValue(goal) : '-';
   return `${formatValue(current)}/${goalValue}${unit}`;
+}
+
+function formatDurationRingProgress(currentMinutes: number | undefined, goalMinutes: number | undefined, digits = 1): string {
+  if (typeof currentMinutes !== 'number' || !Number.isFinite(currentMinutes)) {
+    if (typeof goalMinutes !== 'number' || !Number.isFinite(goalMinutes)) {
+      return '-/-';
+    }
+    return Math.abs(goalMinutes) < 60 ? `-/${Math.round(goalMinutes)}分钟` : `-/${toHours(goalMinutes, digits)}小时`;
+  }
+
+  if (typeof goalMinutes !== 'number' || !Number.isFinite(goalMinutes)) {
+    return Math.abs(currentMinutes) < 60 ? `${Math.round(currentMinutes)}/-分钟` : `${toHours(currentMinutes, digits)}/-小时`;
+  }
+
+  if (Math.abs(currentMinutes) < 60 || Math.abs(goalMinutes) < 60) {
+    return `${Math.round(currentMinutes)}/${Math.round(goalMinutes)}分钟`;
+  }
+
+  return `${toHours(currentMinutes, digits)}/${toHours(goalMinutes, digits)}小时`;
 }
 
 export function detectHealthRiskAlerts(snapshot: HealthRiskSnapshotInput): HealthRiskAlert[] {
@@ -281,7 +311,7 @@ export function detectHealthRiskAlerts(snapshot: HealthRiskSnapshotInput): Healt
       severity: stepsToday < 1000 ? 'high' : 'watch',
       title: '活动不足',
       message: `今日步数约 ${Math.round(stepsToday)} 步，低于 2000 步。`,
-      recommendation: '建议今天补 2-3 次、每次约 0.2 小时的快走，先把久坐状态打断。',
+      recommendation: '建议今天补 2-3 次、每次快走约 12 分钟，先把久坐状态打断。',
       value: stepsToday,
       unit: '步',
       triggeredAt,
@@ -295,8 +325,8 @@ export function detectHealthRiskAlerts(snapshot: HealthRiskSnapshotInput): Healt
       code: 'daylight_low',
       severity: daylightMinutes < 10 ? 'high' : 'watch',
       title: '光照不足',
-      message: `今日日照时长约 ${daylightHours} 小时，户外光照暴露不足。`,
-      recommendation: '建议白天尽量安排 0.3-0.5 小时户外步行或晒太阳，帮助节律与情绪稳定。',
+      message: `今日日照时长约 ${formatDurationMinutes(daylightMinutes)}，户外光照暴露不足。`,
+      recommendation: '建议白天尽量安排 18-30 分钟户外步行或晒太阳，帮助节律与情绪稳定。',
       value: daylightHours,
       unit: '小时',
       triggeredAt,
@@ -341,7 +371,7 @@ export function detectHealthRiskAlerts(snapshot: HealthRiskSnapshotInput): Healt
     ringIssues.push(`活动能量 ${formatRingProgress(moveValue, moveGoal, '千卡')}`);
   }
   if (typeof exerciseGoal === 'number' && typeof exerciseValue === 'number' && exerciseValue < exerciseGoal) {
-    ringIssues.push(`锻炼时长 ${formatRingProgress(toHours(exerciseValue), toHours(exerciseGoal), '小时', 1)}`);
+    ringIssues.push(`锻炼时长 ${formatDurationRingProgress(exerciseValue, exerciseGoal)}`);
   }
   if (typeof standGoal === 'number' && typeof standHours === 'number' && standHours < standGoal) {
     ringIssues.push(`站立时长 ${formatRingProgress(standHours, standGoal, '小时')}`);

@@ -138,6 +138,14 @@ const healthEnvironmentDataSchema = z
   })
   .passthrough();
 
+const healthProfileDataSchema = z
+  .object({
+    age: optionalNumber,
+    heightCm: optionalNumber,
+    weightKg: optionalNumber,
+  })
+  .passthrough();
+
 const healthBodyDataSchema = z
   .object({
     respiratoryRateBrpm: optionalNumber,
@@ -273,6 +281,7 @@ const healthSnapshotDataSchema = z
     oxygen: healthOxygenDataSchema.optional(),
     metabolic: healthMetabolicDataSchema.optional(),
     environment: healthEnvironmentDataSchema.optional(),
+    profile: healthProfileDataSchema.optional(),
     body: healthBodyDataSchema.optional(),
     huawei: huaweiAllDataSchema.optional(),
     workouts: z.array(healthWorkoutRecordSchema).optional(),
@@ -297,6 +306,7 @@ type HealthUploadPayload = {
   oxygen?: z.infer<typeof healthOxygenDataSchema>;
   metabolic?: z.infer<typeof healthMetabolicDataSchema>;
   environment?: z.infer<typeof healthEnvironmentDataSchema>;
+  profile?: z.infer<typeof healthProfileDataSchema>;
   body?: z.infer<typeof healthBodyDataSchema>;
   huawei?: z.infer<typeof huaweiAllDataSchema>;
   workouts?: Array<z.infer<typeof healthWorkoutRecordSchema>>;
@@ -312,6 +322,7 @@ type HealthUploadPayloadRaw = {
   oxygen?: z.infer<typeof healthOxygenDataSchema>;
   metabolic?: z.infer<typeof healthMetabolicDataSchema>;
   environment?: z.infer<typeof healthEnvironmentDataSchema>;
+  profile?: z.infer<typeof healthProfileDataSchema>;
   body?: z.infer<typeof healthBodyDataSchema>;
   huawei?: z.infer<typeof huaweiAllDataSchema>;
   workouts?: Array<z.infer<typeof healthWorkoutRecordSchema>>;
@@ -382,6 +393,123 @@ function normalizeHealthSource(source: HealthUploadPayloadRaw['source']): Health
     return 'huawei_health';
   }
   return source;
+}
+
+function sanitizeProfileNumber(value: unknown, min: number, max: number): number | undefined {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    return undefined;
+  }
+  if (value < min || value > max) {
+    return undefined;
+  }
+  return value;
+}
+
+function shouldUpdateNumericField(previousValue: number | undefined, nextValue: number | undefined): boolean {
+  if (nextValue === undefined) {
+    return false;
+  }
+  if (previousValue === undefined) {
+    return true;
+  }
+  return Math.abs(previousValue - nextValue) >= 0.1;
+}
+
+function toSafeUser(user: {
+  id?: string;
+  _id?: unknown;
+  username?: string;
+  name?: string;
+  email?: string;
+  age?: number;
+  gender?: string;
+  heightCm?: number;
+  weightKg?: number;
+  experimentConsent?: boolean;
+  createdAt?: Date;
+  updatedAt?: Date;
+}): Record<string, unknown> {
+  return {
+    id: user.id ?? String(user._id ?? ''),
+    username: user.username,
+    name: user.name,
+    email: user.email ?? '',
+    age: user.age,
+    gender: user.gender,
+    heightCm: user.heightCm,
+    weightKg: user.weightKg,
+    experimentConsent: user.experimentConsent,
+    createdAt: user.createdAt,
+    updatedAt: user.updatedAt,
+  };
+}
+
+async function syncUserRegistrationFromHealthSnapshot(args: {
+  userId: string;
+  user: {
+    id?: string;
+    _id?: unknown;
+    username?: string;
+    name?: string;
+    email?: string;
+    age?: number;
+    gender?: string;
+    heightCm?: number;
+    weightKg?: number;
+    experimentConsent?: boolean;
+    createdAt?: Date;
+    updatedAt?: Date;
+  } | null;
+  snapshot: HealthUploadPayload;
+}): Promise<
+  | {
+      id?: string;
+      _id?: unknown;
+      username?: string;
+      name?: string;
+      email?: string;
+      age?: number;
+      gender?: string;
+      heightCm?: number;
+      weightKg?: number;
+      experimentConsent?: boolean;
+      createdAt?: Date;
+      updatedAt?: Date;
+    }
+  | null
+> {
+  if (!args.user) {
+    return null;
+  }
+  if (args.snapshot.source !== 'healthkit') {
+    return args.user;
+  }
+
+  const nextAge = sanitizeProfileNumber(args.snapshot.profile?.age, 1, 120);
+  const nextHeightCm = sanitizeProfileNumber(args.snapshot.profile?.heightCm, 50, 250);
+  const nextWeightKg =
+    sanitizeProfileNumber(args.snapshot.profile?.weightKg, 20, 300) ??
+    sanitizeProfileNumber(args.snapshot.body?.bodyMassKg, 20, 300);
+
+  const updates: Record<string, number> = {};
+  if (shouldUpdateNumericField(args.user.age, nextAge)) {
+    updates.age = Math.round(nextAge as number);
+  }
+  if (shouldUpdateNumericField(args.user.heightCm, nextHeightCm)) {
+    updates.heightCm = Number((nextHeightCm as number).toFixed(1));
+  }
+  if (shouldUpdateNumericField(args.user.weightKg, nextWeightKg)) {
+    updates.weightKg = Number((nextWeightKg as number).toFixed(1));
+  }
+
+  if (Object.keys(updates).length === 0) {
+    return args.user;
+  }
+
+  return User.findByIdAndUpdate(args.userId, { $set: updates }, { new: true })
+    .select('username name email age gender heightCm weightKg experimentConsent createdAt updatedAt')
+    .lean()
+    .exec();
 }
 
 async function syncUserHealthProfile(args: {
@@ -496,14 +624,24 @@ export async function uploadHealthSnapshot(req: Request, res: Response): Promise
     const snapshotDigest = createSnapshotDigest(snapshot);
     const payloadBytes = estimatePayloadBytes(snapshot);
     const user = await User.findById(userId)
-      .select('age gender heightCm weightKg')
+      .select('username name email age gender heightCm weightKg experimentConsent createdAt updatedAt')
       .lean()
       .exec();
+    const syncedUser = await syncUserRegistrationFromHealthSnapshot({
+      userId,
+      user,
+      snapshot,
+    });
+    const effectiveUser = syncedUser ?? user;
     const alerts = detectHealthRiskAlerts({
       ...snapshot,
       profile: {
-        heightCm: user?.heightCm,
-        weightKg: snapshot.body?.bodyMassKg ?? user?.weightKg,
+        age: snapshot.profile?.age ?? effectiveUser?.age,
+        heightCm: snapshot.profile?.heightCm ?? effectiveUser?.heightCm,
+        weightKg:
+          snapshot.profile?.weightKg ??
+          snapshot.body?.bodyMassKg ??
+          effectiveUser?.weightKg,
       },
     });
 
@@ -539,7 +677,7 @@ export async function uploadHealthSnapshot(req: Request, res: Response): Promise
         source: snapshot.source,
         generatedAt: generatedAtDate,
         alerts,
-        userProfile: user,
+        userProfile: effectiveUser,
       });
 
       void pruneSnapshotsForUser(String(userId), nowMs).catch(error => {
@@ -552,6 +690,7 @@ export async function uploadHealthSnapshot(req: Request, res: Response): Promise
         generatedAt: existingSameSample.generatedAt.toISOString(),
         hasRiskAlerts: alerts.length > 0,
         alerts,
+        user: effectiveUser ? toSafeUser(effectiveUser) : undefined,
         deduplicated: true,
         dedupReason: 'same_generated_at',
       });
@@ -573,7 +712,7 @@ export async function uploadHealthSnapshot(req: Request, res: Response): Promise
           source: snapshot.source,
           generatedAt: generatedAtDate,
           alerts,
-          userProfile: user,
+          userProfile: effectiveUser,
         });
         res.status(200).json({
           id: String(latest._id),
@@ -581,6 +720,7 @@ export async function uploadHealthSnapshot(req: Request, res: Response): Promise
           generatedAt: new Date(latest.generatedAt).toISOString(),
           hasRiskAlerts: alerts.length > 0,
           alerts,
+          user: effectiveUser ? toSafeUser(effectiveUser) : undefined,
           deduplicated: true,
           dedupReason: 'retry_window',
         });
@@ -615,7 +755,7 @@ export async function uploadHealthSnapshot(req: Request, res: Response): Promise
       source: snapshot.source,
       generatedAt: generatedAtDate,
       alerts,
-      userProfile: user,
+      userProfile: effectiveUser,
     });
 
     void pruneSnapshotsForUser(String(userId), nowMs).catch(error => {
@@ -628,6 +768,7 @@ export async function uploadHealthSnapshot(req: Request, res: Response): Promise
       generatedAt: created.generatedAt.toISOString(),
       hasRiskAlerts: alerts.length > 0,
       alerts,
+      user: effectiveUser ? toSafeUser(effectiveUser) : undefined,
       deduplicated: false,
     });
   } catch (error) {

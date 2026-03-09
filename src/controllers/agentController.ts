@@ -33,6 +33,7 @@ const clientHealthSnapshotSchema = z
     oxygen: z.record(z.unknown()).optional(),
     metabolic: z.record(z.unknown()).optional(),
     environment: z.record(z.unknown()).optional(),
+    profile: z.record(z.unknown()).optional(),
     body: z.record(z.unknown()).optional(),
     huawei: z.record(z.unknown()).optional(),
     workouts: z.array(z.record(z.unknown())).optional(),
@@ -64,6 +65,9 @@ function formatMetric(value: number | undefined, unit = ''): string {
 function formatHoursMetric(valueMinutes: number | undefined, digits = 1): string {
   if (typeof valueMinutes !== 'number' || !Number.isFinite(valueMinutes)) {
     return '-';
+  }
+  if (Math.abs(valueMinutes) < 60) {
+    return `${Math.round(valueMinutes)}分钟`;
   }
   return `${(valueMinutes / 60).toFixed(digits)}小时`;
 }
@@ -99,7 +103,7 @@ function buildHealthContextFromClientSnapshot(snapshot: ClientHealthSnapshotPayl
       `活动: 步数=${formatMetric(toNumber(activity.stepsToday), '步')}, 距离=${formatMetric(
         toNumber(activity.distanceWalkingRunningKmToday),
         'km'
-      )}, 活动能量=${formatMetric(toNumber(activity.activeEnergyKcalToday), 'kcal')}, 运动时长=${formatHoursMetric(
+      )}, 活动能量=${formatMetric(toNumber(activity.activeEnergyKcalToday), '千卡')}, 运动时长=${formatHoursMetric(
         toNumber(activity.exerciseMinutesToday)
       )}`
     );
@@ -186,7 +190,7 @@ function buildHealthContextFromClientSnapshot(snapshot: ClientHealthSnapshotPayl
         `华为活动: 步数=${formatMetric(toNumber(huaweiActivity.stepsToday), '步')}, 距离=${formatMetric(
           toNumber(huaweiActivity.distanceKmToday),
           'km'
-        )}, 卡路里=${formatMetric(toNumber(huaweiActivity.caloriesKcalToday), 'kcal')}, 活跃时长=${formatHoursMetric(
+        )}, 卡路里=${formatMetric(toNumber(huaweiActivity.caloriesKcalToday), '千卡')}, 活跃时长=${formatHoursMetric(
           toNumber(huaweiActivity.activeMinutesToday)
         )}`
       );
@@ -310,7 +314,7 @@ function buildHealthContext(snapshot: HealthSnapshotDocument): string {
       `活动: 步数=${formatMetric(activity.stepsToday, '步')}, 距离=${formatMetric(
         activity.distanceWalkingRunningKmToday,
         'km'
-      )}, 活动能量=${formatMetric(activity.activeEnergyKcalToday, 'kcal')}, 运动时长=${formatHoursMetric(
+      )}, 活动能量=${formatMetric(activity.activeEnergyKcalToday, '千卡')}, 运动时长=${formatHoursMetric(
         activity.exerciseMinutesToday
       )}`
     );
@@ -396,7 +400,7 @@ function buildHealthContext(snapshot: HealthSnapshotDocument): string {
         `华为活动: 步数=${formatMetric(huawei.activity.stepsToday, '步')}, 距离=${formatMetric(
           huawei.activity.distanceKmToday,
           'km'
-        )}, 卡路里=${formatMetric(huawei.activity.caloriesKcalToday, 'kcal')}, 活跃时长=${formatHoursMetric(
+        )}, 卡路里=${formatMetric(huawei.activity.caloriesKcalToday, '千卡')}, 活跃时长=${formatHoursMetric(
           huawei.activity.activeMinutesToday
         )}`
       );
