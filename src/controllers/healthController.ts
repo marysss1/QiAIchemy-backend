@@ -390,11 +390,14 @@ async function syncUserHealthProfile(args: {
   source: string;
   generatedAt: Date;
   alerts: HealthRiskAlert[];
+  userProfile?: {
+    age?: number;
+    gender?: string;
+    heightCm?: number;
+    weightKg?: number;
+  } | null;
 }): Promise<void> {
-  const [existing, user] = await Promise.all([
-    UserHealthProfile.findOne({ userId: args.userId }).exec(),
-    User.findById(args.userId).exec(),
-  ]);
+  const existing = await UserHealthProfile.findOne({ userId: args.userId }).exec();
   const latestSignals = args.alerts.map(alert => {
     const alertDate = new Date(alert.triggeredAt);
     const detectedAt = Number.isNaN(alertDate.getTime()) ? args.generatedAt : alertDate;
@@ -413,10 +416,10 @@ async function syncUserHealthProfile(args: {
   });
   const trackedSignals = mergeTrackedHealthSignals(existing?.trackedSignals ?? [], args.alerts, args.generatedAt);
   const llmHealthOverview = await summarizeHealthProfileOverview({
-    age: user?.age,
-    gender: user?.gender,
-    heightCm: user?.heightCm,
-    weightKg: user?.weightKg,
+    age: args.userProfile?.age,
+    gender: args.userProfile?.gender,
+    heightCm: args.userProfile?.heightCm,
+    weightKg: args.userProfile?.weightKg,
     latestSignals: latestSignals.map(signal => ({
       title: signal.title,
       severity: signal.severity,
@@ -492,7 +495,17 @@ export async function uploadHealthSnapshot(req: Request, res: Response): Promise
 
     const snapshotDigest = createSnapshotDigest(snapshot);
     const payloadBytes = estimatePayloadBytes(snapshot);
-    const alerts = detectHealthRiskAlerts(snapshot);
+    const user = await User.findById(userId)
+      .select('age gender heightCm weightKg')
+      .lean()
+      .exec();
+    const alerts = detectHealthRiskAlerts({
+      ...snapshot,
+      profile: {
+        heightCm: user?.heightCm,
+        weightKg: snapshot.body?.bodyMassKg ?? user?.weightKg,
+      },
+    });
 
     const existingSameSample = await HealthSnapshot.findOne({
       userId,
@@ -526,6 +539,7 @@ export async function uploadHealthSnapshot(req: Request, res: Response): Promise
         source: snapshot.source,
         generatedAt: generatedAtDate,
         alerts,
+        userProfile: user,
       });
 
       void pruneSnapshotsForUser(String(userId), nowMs).catch(error => {
@@ -559,6 +573,7 @@ export async function uploadHealthSnapshot(req: Request, res: Response): Promise
           source: snapshot.source,
           generatedAt: generatedAtDate,
           alerts,
+          userProfile: user,
         });
         res.status(200).json({
           id: String(latest._id),
@@ -600,6 +615,7 @@ export async function uploadHealthSnapshot(req: Request, res: Response): Promise
       source: snapshot.source,
       generatedAt: generatedAtDate,
       alerts,
+      userProfile: user,
     });
 
     void pruneSnapshotsForUser(String(userId), nowMs).catch(error => {

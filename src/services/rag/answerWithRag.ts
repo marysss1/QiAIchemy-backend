@@ -83,6 +83,36 @@ const HEALTH_DOMAIN_HINTS = [
   '亚健康',
 ];
 
+const IMPLICIT_HEALTH_HINTS = [
+  '身体',
+  '不舒服',
+  '难受',
+  '不太对',
+  '不对劲',
+  '状态差',
+  '还有救吗',
+  '有救吗',
+  '严不严重',
+  '怎么办',
+  '怎么回事',
+  '扛不住',
+  '撑不住',
+];
+
+const SELF_HARM_HINTS = [
+  '自杀',
+  '轻生',
+  '想死',
+  '不想活',
+  '活着没意义',
+  '结束生命',
+  '去死',
+  '死了算了',
+  '自残',
+  '割腕',
+  '跳楼',
+];
+
 function buildSystemPrompt(personalized: boolean, responseStyle: RagResponseStyle): string {
   const lines = [
     '你是 QiAIchemy 的中医知识助手。',
@@ -178,13 +208,38 @@ function buildUserContent(
   return parts.join('\n');
 }
 
-function isLikelyHealthQuery(question: string): boolean {
+function isLikelyHealthQuery(question: string, allowImplicit = true): boolean {
   const normalized = question.trim().toLowerCase();
   if (!normalized) {
     return false;
   }
 
-  return HEALTH_DOMAIN_HINTS.some((keyword) => normalized.includes(keyword));
+  if (HEALTH_DOMAIN_HINTS.some((keyword) => normalized.includes(keyword))) {
+    return true;
+  }
+
+  return allowImplicit && IMPLICIT_HEALTH_HINTS.some((keyword) => normalized.includes(keyword));
+}
+
+function hasHealthConversationContext(history: ConversationTurn[] | undefined): boolean {
+  return Boolean(history?.some((item) => isLikelyHealthQuery(item.content, true)));
+}
+
+function isSelfHarmRiskQuery(question: string): boolean {
+  const normalized = question.trim().toLowerCase();
+  if (!normalized) {
+    return false;
+  }
+  return SELF_HARM_HINTS.some((keyword) => normalized.includes(keyword));
+}
+
+function buildSelfHarmCrisisAnswer(): string {
+  return [
+    '如果你现在有伤害自己或结束生命的想法，请不要一个人扛着，立刻联系身边可信任的人陪你，并马上寻求线下帮助。',
+    '中国大陆可以先拨打全国统一心理援助热线 12356；如果已经有现实危险，请直接拨打 120 或 110。',
+    '在等待帮助时，请尽量远离刀片、药物、绳索、酒精和其他可能伤害自己的物品，去有人在的地方。',
+    '如果你愿意，也可以直接告诉我：你现在是否已经准备实施、身边是否有人、你所在城市，我会先帮你把求助步骤排清楚。',
+  ].join('\n');
 }
 
 function hasUsableEvidence(question: string, evidence: RetrievedChunk[]): boolean {
@@ -209,21 +264,86 @@ function hasUsableEvidence(question: string, evidence: RetrievedChunk[]): boolea
   return supportiveHits >= 2 && (topLexical >= 0.04 || topEmbedding >= 0.58);
 }
 
-function buildOutOfScopeAnswer(question: string): string {
-  if (!isLikelyHealthQuery(question)) {
+function buildOutOfScopeAnswer(options: {
+  question: string;
+  healthContext?: string;
+  conversationHistory?: ConversationTurn[];
+}): string {
+  const likelyHealthQuery = isLikelyHealthQuery(options.question, true);
+  const hasPersonalContext = Boolean(options.healthContext?.trim()) || hasHealthConversationContext(options.conversationHistory);
+
+  if (!likelyHealthQuery && !hasPersonalContext) {
     return [
-      '当前助手聚焦中医健康、养生和健康数据解读。',
-      '你这条问题更像通用规划/生活安排任务，不属于当前知识库覆盖范围，所以不适合硬答。',
-      '如果你愿意，可以改成健康相关问法，例如：',
+      '当前助手主要处理中医健康、养生和健康数据解读。',
+      '这条问题暂时不适合直接用现有知识库作答。',
+      '如果你愿意，我可以把它改写成健康相关问法，例如：',
       '1. “带老人和孩子去成都 5 天，如何安排作息、步行量和饮食，减少疲劳？”',
       '2. “旅行期间老人睡眠浅、孩子作息乱，怎么做中医养生式安排？”',
     ].join('\n');
   }
 
   return [
-    '当前知识库里没有足够直接的证据支持这条回答，所以我不想硬凑结论。',
-    '你可以补充更具体的健康信息，例如症状、持续时间、近期作息、饮食、活动和关键指标，我再按中医健康框架重答。',
+    '我可以继续帮你，但这句话还不足以判断具体问题。',
+    '请优先补充这 3 件事：1. 最困扰的症状或感受 2. 持续了多久 3. 最近作息、饮食、压力或运动有哪些明显变化。',
+    '如果方便，也可以补充睡眠、步数、心率、血氧、血糖等数据，我会按中医健康框架继续分析。',
+    '如果你现在有胸痛、呼吸困难、持续高热、晕厥，或明显的自伤念头，请立刻线下就医或寻求紧急帮助。',
   ].join('\n');
+}
+
+async function buildHealthFallbackAnswer(options: {
+  question: string;
+  healthContext?: string;
+  conversationHistory?: ConversationTurn[];
+}): Promise<string> {
+  const fallbackText = buildOutOfScopeAnswer(options);
+
+  try {
+    const messages: ChatCompletionMessageParam[] = [
+      {
+        role: 'system',
+        content: [
+          '你是 QiAIchemy 的健康陪伴模式。',
+          '当知识库证据不足时，不要提“知识库覆盖范围”或“检索不到”。',
+          '你可以继续结合用户当前语气、上下文和健康场景，用健康相关的方式回应。',
+          '优先做三件事：先接住情绪，再给出最稳妥的健康相关方向，再提出 1-3 个澄清问题。',
+          '不要做确定性诊断，不要编造检查结果，不要脱离健康话题闲聊。',
+          '如果用户情绪明显低落、绝望或带风险，提醒尽快找家人朋友、医生或心理援助热线支持。',
+          '输出 3-6 句中文，不要加标题。',
+        ].join('\n'),
+      },
+    ];
+
+    if (options.healthContext?.trim()) {
+      messages.push({
+        role: 'system',
+        content: `已知健康背景：\n${options.healthContext.trim()}`,
+      });
+    }
+
+    if (options.conversationHistory?.length) {
+      messages.push(
+        ...options.conversationHistory.slice(-6).map((item) => ({
+          role: item.role,
+          content: item.content,
+        }))
+      );
+    }
+
+    messages.push({
+      role: 'user',
+      content: options.question,
+    });
+
+    const completion = await createChatCompletion(messages, {
+      temperature: 0.3,
+      max_tokens: 220,
+    });
+    const text = completion.choices[0]?.message?.content?.trim();
+    return text || fallbackText;
+  } catch (error) {
+    console.warn('[rag] fallback health chat failed, use static fallback:', error);
+    return fallbackText;
+  }
 }
 
 export async function answerWithRagPersonalized(
@@ -234,6 +354,15 @@ export async function answerWithRagPersonalized(
   const trimmedQuestion = options.question.trim();
   if (!trimmedQuestion) {
     throw new Error('Question is empty');
+  }
+
+  if (isSelfHarmRiskQuery(trimmedQuestion)) {
+    return {
+      answer: buildSelfHarmCrisisAnswer(),
+      citations: [],
+      evidenceCount: 0,
+      model: env.LLM_CHAT_MODEL,
+    };
   }
 
   const graphContext = [
@@ -249,7 +378,11 @@ export async function answerWithRagPersonalized(
 
   if (!hasUsableEvidence(trimmedQuestion, evidence)) {
     return {
-      answer: buildOutOfScopeAnswer(trimmedQuestion),
+      answer: await buildHealthFallbackAnswer({
+        question: trimmedQuestion,
+        healthContext: options.healthContext,
+        conversationHistory: options.conversationHistory,
+      }),
       citations: [],
       evidenceCount: evidence.length,
       model: env.LLM_CHAT_MODEL,

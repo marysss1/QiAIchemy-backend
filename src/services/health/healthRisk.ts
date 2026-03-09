@@ -52,6 +52,10 @@ type TrendPointInput = {
 
 type HealthRiskSnapshotInput = {
   generatedAt: string;
+  profile?: {
+    heightCm?: number;
+    weightKg?: number;
+  };
   activity?: {
     stepsToday?: number;
     activeEnergyKcalToday?: number;
@@ -86,6 +90,10 @@ type HealthRiskSnapshotInput = {
   };
   environment?: {
     daylightMinutesToday?: number;
+  };
+  body?: {
+    bodyMassKg?: number;
+    bmi?: number;
   };
   huawei?: {
     activity?: {
@@ -135,6 +143,16 @@ function toMmolL(valueMgDl: number): number {
 
 function toHours(valueMinutes: number, digits = 1): number {
   return Number((valueMinutes / 60).toFixed(digits));
+}
+
+function calculateBmi(weightKg: number, heightCm: number): number | undefined {
+  if (!Number.isFinite(weightKg) || !Number.isFinite(heightCm) || weightKg <= 0 || heightCm <= 0) {
+    return undefined;
+  }
+
+  const heightM = heightCm / 100;
+  const bmi = weightKg / (heightM * heightM);
+  return Number.isFinite(bmi) ? Number(bmi.toFixed(1)) : undefined;
 }
 
 function formatRingProgress(
@@ -384,16 +402,30 @@ export function detectHealthRiskAlerts(snapshot: HealthRiskSnapshotInput): Healt
     }
   }
 
-  const bmi = snapshot.huawei?.body?.bmi;
+  const bmi =
+    snapshot.body?.bmi ??
+    (typeof snapshot.body?.bodyMassKg === 'number' && typeof snapshot.profile?.heightCm === 'number'
+      ? calculateBmi(snapshot.body.bodyMassKg, snapshot.profile.heightCm)
+      : undefined) ??
+    (typeof snapshot.profile?.weightKg === 'number' && typeof snapshot.profile?.heightCm === 'number'
+      ? calculateBmi(snapshot.profile.weightKg, snapshot.profile.heightCm)
+      : undefined) ??
+    snapshot.huawei?.body?.bmi;
+
   if (typeof bmi === 'number' && (bmi < 18.5 || bmi >= 24)) {
+    const isUnderweight = bmi < 18.5;
     putAlert(alertsByCode, {
       code: 'bmi_abnormal',
       severity: bmi < 17 || bmi >= 28 ? 'high' : 'watch',
-      title: 'BMI 异常',
-      message: `BMI 约 ${bmi.toFixed(1)}，超出理想范围。`,
-      recommendation: '建议结合饮食节律、睡眠与基础活动做连续调整，而不是短期激进控制。',
+      title: isUnderweight ? 'BMI 偏低提醒' : 'BMI 偏高提醒',
+      message: isUnderweight
+        ? `按当前身高体重估算 BMI 约 ${bmi.toFixed(1)}，低于理想范围。`
+        : `按当前身高体重估算 BMI 约 ${bmi.toFixed(1)}，高于理想范围。`,
+      recommendation: isUnderweight
+        ? '建议先排查是否长期进食不足、睡眠差或压力过高，优先恢复规律进食与睡眠。'
+        : '建议先从作息、进食节律和基础活动量连续调整，不要用短期极端节食来处理。',
       value: bmi,
-      unit: 'BMI',
+      unit: 'kg/m²',
       triggeredAt,
     });
   }
