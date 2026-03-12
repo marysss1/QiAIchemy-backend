@@ -693,6 +693,7 @@ export async function ragHealthChat(req: Request, res: Response): Promise<void> 
       topK: parsed.data.topK ?? env.RAG_TOP_K,
       conversationHistory: normalizeHistory(parsed.data.history),
       healthContext,
+      strictTcmScope: true,
     });
 
     res.status(200).json({

@@ -37,6 +37,7 @@ export interface RagPersonalizedOptions {
   responseStyle?: RagResponseStyle;
   temperature?: number;
   maxTokens?: number;
+  strictTcmScope?: boolean;
 }
 
 const HEALTH_DOMAIN_HINTS = [
@@ -113,7 +114,13 @@ const SELF_HARM_HINTS = [
   '跳楼',
 ];
 
-function buildSystemPrompt(personalized: boolean, responseStyle: RagResponseStyle): string {
+const STRICT_TCM_SCOPE_LINES = [
+  '你只能从中医理论、中式养生和健康管理视角回答问题。',
+  '禁止提供西医诊断、药物处方、检验指标结论、影像结论、手术方案或替代线下就医的判断。',
+  '如果用户追问的内容超出中医健康范围，先明确说明你仅提供中医视角建议，再只给出与中医调理相关的内容；无法从中医视角回答时直接说明不适用。',
+];
+
+function buildSystemPrompt(personalized: boolean, responseStyle: RagResponseStyle, strictTcmScope = false): string {
   const lines = [
     '你是 QiAIchemy 的中医知识助手。',
     '回答必须严格基于提供的参考资料，不要编造。若证据不足，明确说“根据当前资料无法确定”。',
@@ -125,6 +132,10 @@ function buildSystemPrompt(personalized: boolean, responseStyle: RagResponseStyl
 
   if (personalized) {
     lines.push('如果提供了用户健康快照，请结合该数据给出个性化建议，并明确“基于用户数据”的依据，避免过度推断。');
+  }
+
+  if (strictTcmScope) {
+    lines.push(...STRICT_TCM_SCOPE_LINES);
   }
 
   if (responseStyle === 'readable') {
@@ -294,22 +305,29 @@ async function buildHealthFallbackAnswer(options: {
   question: string;
   healthContext?: string;
   conversationHistory?: ConversationTurn[];
+  strictTcmScope?: boolean;
 }): Promise<string> {
   const fallbackText = buildOutOfScopeAnswer(options);
 
   try {
+    const systemLines = [
+      '你是 QiAIchemy 的健康陪伴模式。',
+      '当知识库证据不足时，不要提“知识库覆盖范围”或“检索不到”。',
+      '你可以继续结合用户当前语气、上下文和健康场景，用健康相关的方式回应。',
+      '优先做三件事：先接住情绪，再给出最稳妥的健康相关方向，再提出 1-3 个澄清问题。',
+      '不要做确定性诊断，不要编造检查结果，不要脱离健康话题闲聊。',
+      '如果用户情绪明显低落、绝望或带风险，提醒尽快找家人朋友、医生或心理援助热线支持。',
+      '输出 3-6 句中文，不要加标题。',
+    ];
+
+    if (options.strictTcmScope) {
+      systemLines.push(...STRICT_TCM_SCOPE_LINES);
+    }
+
     const messages: ChatCompletionMessageParam[] = [
       {
         role: 'system',
-        content: [
-          '你是 QiAIchemy 的健康陪伴模式。',
-          '当知识库证据不足时，不要提“知识库覆盖范围”或“检索不到”。',
-          '你可以继续结合用户当前语气、上下文和健康场景，用健康相关的方式回应。',
-          '优先做三件事：先接住情绪，再给出最稳妥的健康相关方向，再提出 1-3 个澄清问题。',
-          '不要做确定性诊断，不要编造检查结果，不要脱离健康话题闲聊。',
-          '如果用户情绪明显低落、绝望或带风险，提醒尽快找家人朋友、医生或心理援助热线支持。',
-          '输出 3-6 句中文，不要加标题。',
-        ].join('\n'),
+        content: systemLines.join('\n'),
       },
     ];
 
@@ -382,6 +400,7 @@ export async function answerWithRagPersonalized(
         question: trimmedQuestion,
         healthContext: options.healthContext,
         conversationHistory: options.conversationHistory,
+        strictTcmScope: options.strictTcmScope,
       }),
       citations: [],
       evidenceCount: evidence.length,
@@ -393,7 +412,7 @@ export async function answerWithRagPersonalized(
     (options.conversationHistory && options.conversationHistory.length > 0) || options.healthContext
   );
   const messages: ChatCompletionMessageParam[] = [
-    { role: 'system', content: buildSystemPrompt(personalized, responseStyle) },
+    { role: 'system', content: buildSystemPrompt(personalized, responseStyle, options.strictTcmScope) },
     {
       role: 'user',
       content: buildUserContent(trimmedQuestion, evidence, options.conversationHistory, options.healthContext),
